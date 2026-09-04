@@ -1,38 +1,29 @@
 # Roadmap: Verenu
 
-## In Progress - 0.15.0
+## Current line: 0.18.0
 
-## 0. Local Transcription Beta
-- **Goal**: Ship local transcription as a first-class backend in the normal pipeline instead of as a separate workflow.
-- **Current Scope**:
-    - Recommended local path is `local/parakeet-v3`
-    - Cleanup can be `Off` or a cloud provider
-    - "Fully local" only applies when local transcription is paired with `Cleanup: Off`
-    - Moonshine, Whisper.cpp, and custom local models stay behind advanced UI until Parakeet is boringly reliable
-- **Relevant Files**: `src-tauri/src/local_stt/`, `src-tauri/src/pipeline/`, `src/lib/components/settings/ModelsSection.svelte`, `src/PillApp.svelte`, `docs/LOCAL_TRANSCRIPTION.md`.
+The current release is 0.18.0. Short-lived release work belongs in the `Unreleased` section of [CHANGELOG.md](CHANGELOG.md). This page records open follow-up work and longer-term status.
 
-## 1. Models and Settings Redesign
-- **Goal**: Finish the model picker cleanup so provider selection, advanced mode, and key validation feel predictable instead of fragile.
-- **Implementation Plan**:
-    - Keep simple mode and advanced mode in sync so changing defaults, fallbacks, and provider keys never leaves the UI in a half-valid state.
-    - Make active transcription and cleanup chains easier to inspect before the user starts dictating.
-    - Keep provider key validation and model selection persistence consistent across reloads and provider switches.
-- **Relevant Files**: `src/lib/components/settings/ModelsSection.svelte`, `src/lib/components/settings/ApiKeysSection.svelte`, `src-tauri/src/data/store.rs`, `src-tauri/src/commands/mod.rs`.
+## Completed foundations
 
-## 2. Groq API Key Auth Regression (401/403 After Time)
-- **Goal**: Fix the regression where Groq keys can work after save, then fail with `401` or `403` after roughly an hour until re-entered.
-- **Implementation Plan**:
-    - Reproduce with a soak test: save key once, run repeated transcription and cleanup calls for 2+ hours, and capture first failure timestamp and exact status code.
-    - Compare 0.10.0 key path versus 0.11.x Windows Credential Manager path, including save, read, normalization, and request header generation.
-    - Add temporary diagnostics that log sanitized key fingerprint continuity (`save -> read -> request`) for Groq and compare against OpenAI and Google behavior in the same session.
-    - Capture provider response metadata (request ID, status, classified auth category, model name) so `invalid key` and `access denied` failures are separated.
-    - Verify fallback and routing behavior on auth errors so a hidden provider or model switch is not masking the real source of failure.
-- **Relevant Files**: `src-tauri/src/data/credentials.rs`, `src-tauri/src/api/transcription.rs`, `src-tauri/src/api/cleanup.rs`, `src-tauri/src/api/mod.rs`, `src-tauri/src/pipeline/mod.rs`, `src-tauri/src/main.rs`.
+### Local models
 
-## 3. Contextual Capitalization Reliability Regression
-- **Goal**: Replace the brittle history-only contextual capitalization path with a deterministic context engine that reliably starts new chat messages with proper casing and preserves punctuation across Gemini, browser chat inputs, normal text boxes, and contenteditable editors.
-- **Current Failure Pattern**:
-    - The existing implementation mostly trusts `LAST_INJECTION`, an internal tail of text injected by Verenu.
+Local transcription and local cleanup are part of the normal pipeline. Settings -> Models manages downloaded STT models, cleanup models, and the shared local cleanup runtime. Intel Mac local models remain deliberately gated until that path has been validated on real hardware. See [LOCAL_TRANSCRIPTION.md](LOCAL_TRANSCRIPTION.md).
+
+### Models and settings
+
+The model picker now supports curated and provider-reported cloud models, provider-prefixed defaults and fallback chains, local model download state, and persistence across reloads. Remaining model work should be recorded as a specific bug or feature instead of leaving the original redesign plan open.
+
+## Open follow-up
+
+### Groq credential reliability
+
+The backend now classifies 401/403 responses, reports the provider and request metadata safely, and distinguishes retryable provider failures from invalid credentials. Keep long-running Groq credential soak testing as an open follow-up rather than describing the old credential-storage migration as current work.
+
+## Completed: contextual formatting
+- **Status**: The planned context engine is implemented. Verenu now uses a layered caret-local probe, clipboard-sniff fallback, and guarded history fallback for contextual casing and spacing across supported text controls.
+- **Former failure pattern**:
+    - The former implementation mostly trusted `LAST_INJECTION`, an internal tail of text injected by Verenu.
     - Mouse-click send buttons, browser chat inputs clearing themselves after submit, DOM rewrites, and some Enter/send paths can leave that tail stale.
     - Once stale, the next dictation can be treated as a mid-sentence continuation and the first letter is lowercased even though the target field is empty.
     - Punctuation loss must be debugged separately from casing. Some missing punctuation is likely cleanup/transcription output, not paste-time capitalization.
@@ -40,7 +31,7 @@
     - Never lowercase the first letter unless Verenu has high-confidence evidence that the cursor is still inside the same editable control and immediately follows a non-sentence-ending character.
     - Unknown context must fail closed: preserve the cleanup output casing, or capitalize only through a deterministic sentence-start rule. It must not randomly force lowercase.
     - The old injection tail can remain as a last-resort cache, but it must not be the primary source of truth.
-- **Implementation Plan**:
+- **Implementation history**: The following phases describe the work that produced the current implementation. Keep them as historical context, not as open tasks.
     - **Phase 0 - Instrument the bug without leaking text**:
         - Add verbose diagnostics around injection decisions, but never log dictated text, clipboard contents, user names, emails, prompt contents, or full field contents.
         - Log only metadata: target HWND, process name, focused element identity hash, context source (`uia`, `selection_probe`, `history_tail`, `unknown`), previous-character class (`empty`, `sentence_end`, `word_char`, `space`, `separator`), capitalization decision, punctuation status, and whether the field looked empty.
@@ -89,34 +80,19 @@
         - No diagnostic path logs private dictated text, clipboard text, names, emails, API keys, or full field contents.
 - **Relevant Files**: `src-tauri/src/core/injection/mod.rs`, `src-tauri/src/core/hotkey.rs`, `src-tauri/src/api/auto_learn.rs`, `src-tauri/src/api/prompts/mod.rs`, `src-tauri/src/api/cleanup.rs`, `src-tauri/src/pipeline/mod.rs`, `src/lib/components/settings/GeneralSection.svelte`, `tests/manual/`, `tests/OnePyFone.py`.
 
-## 4. Model-Specific Prompt Contracts and Context Retention
-- **Goal**: Replace generic cleanup prompting with model-specific contracts that are token-efficient while preserving essential context, especially on `light` mode.
-- **Implementation Plan**:
-    - Create provider/model-specific cleanup prompt templates instead of one generalized instruction path for all models.
-    - Define explicit edit budgets per intensity (`none`, `light`, `medium`, `high`) and enforce "must keep" constraints for factual clauses, entities, and user intent.
-    - Add regression fixtures where losing a single clause changes meaning, and compare outputs against known-good 0.10.0 medium-mode behavior.
-    - Audit snippet overrides, dictionary substitutions, and post-cleanup transforms so context is not dropped after the model already returned a good output.
-    - Add prompt-size and token-usage observability to validate efficiency improvements without over-compressing user content.
-- **Relevant Files**: `src-tauri/src/api/prompts/mod.rs`, `src-tauri/src/api/cleanup.rs`, `src-tauri/src/pipeline/mod.rs`, `src-tauri/src/data/snippets.rs`, `src-tauri/src/data/dictionary.rs`, `src/lib/components/settings/ModelsSection.svelte`.
+## Completed: shared cleanup prompt and context retention
 
-## 5. Fallback Chain and Model Persistence Hardening
-- **Goal**: Make transcription fallback, cleanup fallback, and model persistence behave consistently under real failure modes.
-- **Implementation Plan**:
-    - Trace transcription fallback end-to-end and align retry rules with cleanup fallback for `429`, timeout, and `5xx` scenarios.
-    - Validate `401` and `403` handling so non-retryable auth failures stop cleanly and retryable failures advance to the next configured model.
-    - Ensure provider-prefixed IDs, slash-containing model names, and custom entries round-trip correctly between frontend and backend settings.
-    - Add restart persistence checks for default models and fallback chains after provider switches and advanced-mode edits.
-- **Relevant Files**: `src-tauri/src/pipeline/mod.rs`, `src-tauri/src/api/transcription.rs`, `src-tauri/src/api/mod.rs`, `src-tauri/src/data/store.rs`, `src/lib/components/settings/ModelsSection.svelte`, `src-tauri/src/commands/mod.rs`.
+The cleanup pipeline now assembles one shared prompt for every cleanup model, applies explicit intensity rules, preserves factual clauses and qualifiers, and gives snippet instructions a defined priority. Prompt regression tests cover the contract. Future prompt work should be recorded as a focused quality issue.
 
-## 6. Pre-Release Stabilization Gate
-- **Goal**: Hold release until Groq auth reliability, contextual capitalization, light/medium cleanup quality, and fallback behavior match or beat 0.10.0 baseline.
-- **Implementation Plan**:
-    - Run direct A/B checks on 0.10.0 versus 0.11.x for Groq auth duration, capitalization behavior, cleanup preservation, and fallback reliability.
-    - Add targeted smoke and manual checks for the failure paths reported in daily dictation use.
-    - Keep release blocked until the core dictation loop is measurably better, not just feature-complete.
-- **Relevant Files**: `tests/OnePyFone.py`, `tests/smoke/`, `tests/manual/`, `src-tauri/src/pipeline/mod.rs`, `src-tauri/src/api/transcription.rs`, `src-tauri/src/api/cleanup.rs`, `src-tauri/src/core/injection/mod.rs`.
+## Completed: fallback chains and model persistence
 
-## 7. Intel Mac Support for Local Models (Currently Gated Off)
+The current pipeline stores provider-prefixed model IDs, persists defaults and fallback chains, classifies retryable provider failures, and advances through configured candidates. Keep new failures and provider-specific gaps as separate issues rather than reopening the original hardening plan.
+
+## Release stabilization
+
+The project is now on 0.18.0. Use the current test profiles and platform checks for release verification; the old 0.10.0 versus 0.11.x gate is historical and no longer describes the release process.
+
+## Intel Mac support for local models (currently gated off)
 - **Status**: Deliberately unavailable, not a bug. Local on-device STT/LLM (`local_stt`, `local_llm`) is blocked entirely on Intel (x86_64) Mac builds via `system::platform::is_macos_intel()` — the download commands return an error and the Settings → Models UI shows an explanatory notice instead of the download tiles.
 - **Why**: Zero real-world testing on Intel hardware (neither the maintainer nor any current tester owns an Intel Mac), and Intel Macs are old enough now to be both increasingly uncommon and generally underpowered for local LLM inference specifically. Shipping an untested first run there is a worse outcome than a clear "not yet" pointing at cloud providers.
 - **What already exists**: the Metal (Apple Silicon) vs. CPU (Intel) backend split for the local LLM runtime already has real code paths in `local_llm/binary.rs::detect_backend()` and downloads real `macos-x64` llama.cpp release assets — this was never architecturally impossible, just unvalidated.
@@ -209,23 +185,3 @@ These are educated guesses at problems that are likely to exist in the fully ins
 - Stale cache and dictionary pruning on quick output deletion
 - Full UI scrollbar consistency pass
 - Snippet inspector polish (scrollbar, modal height cap, truncation)
-
-
-# Far Future and Monetization (The Funding Plan)
-
-## 1. Cloud Sync ($2/mo Subscription)
-- **Goal**: Sync custom dictionaries, snippets, and API keys across devices.
-- **Rules**:
-    - Must be 100% optional.
-    - Use Supabase for database, efficient data storage.
-
-## 2. Managed "Cloud Optimized" Routing
-- **Goal**: One-click model selection where the cloud picks the best or cheapest model for the audio length.
-- **Implementation**:
-    - **Pay-as-you-go** with a thin **10% markup** over raw token costs.
-    - Aggressive context caching to reduce user latency and cost.
-
-## 3. Opt-in Analytics (PostHog)
-- **Goal**: Track feature usage to guide development.
-- **Strict Rule**: 100% Opt-in. Transparency regarding what is being tracked.
-

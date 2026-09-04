@@ -94,18 +94,20 @@ pub fn strip_unspoken_em_dashes(raw: &str, cleaned: &str) -> String {
     result
 }
 
-/// Standalone filler/hesitation words mechanically stripped from "light"
+/// Standalone filler/hesitation words mechanically stripped from cleanup
 /// intensity cleanup output as a deterministic backstop. Every prompt
 /// already tells the model to remove these, but small local models apply
 /// that instruction unreliably — observed in practice on a single real
 /// dictation: one "um" was correctly stripped while two other filler
-/// words survived untouched elsewhere in the same output. Unlike "like" or
-/// "you know", which have common non-filler meanings ("I like pizza", "let
-/// them know"), a bare um/uh/ah/erm carries no semantic content in English
-/// speech, so mechanical removal here has no real false-positive risk —
-/// unlike "like", which is deliberately NOT on this list.
-const FILLER_HESITATION_WORDS: &[&str] =
-    &["um", "umm", "ummm", "uhm", "uh", "uhh", "uhhh", "erm", "err", "ah", "ahh"];
+/// words survived untouched elsewhere in the same output. Unlike "like",
+/// which has common non-filler meanings, a bare um/uh/ah/erm carries no
+/// semantic content in English speech, so mechanical removal here has no real
+/// false-positive risk — unlike "like", which is deliberately NOT on this
+/// list. The separate "you know" rule only removes an unambiguous discourse
+/// filler position.
+const FILLER_HESITATION_WORDS: &[&str] = &[
+    "um", "umm", "ummm", "uhm", "uh", "uhh", "uhhh", "erm", "err", "ah", "ahh",
+];
 
 fn is_filler_hesitation_word(word: &str) -> bool {
     FILLER_HESITATION_WORDS.contains(&word.to_lowercase().as_str())
@@ -205,17 +207,60 @@ fn capitalize_first_char(word: &str) -> String {
 pub fn strip_filler_hesitations(text: &str) -> String {
     let tokens = tokenize_words_and_other(text);
 
-    let mut kept = Vec::with_capacity(tokens.len());
+    let mut drop = vec![false; tokens.len()];
     let mut removed_any = false;
-    for tok in tokens {
-        match &tok {
-            FillerTok::Word(w) if is_filler_hesitation_word(w) => removed_any = true,
-            _ => kept.push(tok),
+    for (index, tok) in tokens.iter().enumerate() {
+        if let FillerTok::Word(word) = tok {
+            if is_filler_hesitation_word(word) {
+                drop[index] = true;
+                removed_any = true;
+            }
         }
     }
+    // "You know" is meaningful in "you know the answer" and "let them
+    // know". Remove it only at the end of a sentence or immediately before a
+    // discourse connector, where it is unambiguously a filler.
+    for index in 0..tokens.len().saturating_sub(2) {
+        let is_you =
+            matches!(&tokens[index], FillerTok::Word(word) if word.eq_ignore_ascii_case("you"));
+        let is_know = matches!(&tokens[index + 2], FillerTok::Word(word) if word.eq_ignore_ascii_case("know"));
+        if !is_you || !matches!(&tokens[index + 1], FillerTok::Other(_)) || !is_know {
+            continue;
+        }
+        let after_know = index + 3;
+        let next_word = match tokens.get(after_know) {
+            None => Some(""),
+            Some(FillerTok::Other(separator)) if separator.contains('?') => None,
+            Some(FillerTok::Other(_)) => match tokens.get(after_know + 1) {
+                Some(FillerTok::Word(word)) => Some(word.as_str()),
+                _ => Some(""),
+            },
+            Some(FillerTok::Word(word)) => Some(word.as_str()),
+        };
+        let is_connector = next_word.is_some_and(|word| {
+            matches!(
+                word.to_ascii_lowercase().as_str(),
+                "and" | "because" | "but" | "so" | "then"
+            )
+        });
+        let end_of_sentence = next_word == Some("");
+        if end_of_sentence || is_connector {
+            drop[index] = true;
+            drop[index + 1] = true;
+            drop[index + 2] = true;
+            removed_any = true;
+        }
+    }
+
     if !removed_any {
         return text.to_string();
     }
+
+    let kept: Vec<FillerTok> = tokens
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, token)| (!drop[index]).then_some(token))
+        .collect();
 
     let mut merged: Vec<FillerTok> = Vec::with_capacity(kept.len());
     let mut recapitalize_next_word = false;
@@ -410,7 +455,9 @@ pub fn is_number_word_token(token: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{collapse_degenerate_word_runs, strip_filler_hesitations, strip_unspoken_em_dashes};
+    use super::{
+        collapse_degenerate_word_runs, strip_filler_hesitations, strip_unspoken_em_dashes,
+    };
 
     #[test]
     fn strips_an_em_dash_the_model_introduced_mid_sentence() {
@@ -492,6 +539,31 @@ mod tests {
         assert_eq!(
             strip_filler_hesitations("I like pizza and things like that"),
             "I like pizza and things like that"
+        );
+    }
+
+    #[test]
+    fn strips_you_know_only_as_a_clear_discourse_filler() {
+        assert_eq!(
+            strip_filler_hesitations("There will be traffic you know"),
+            "There will be traffic"
+        );
+        assert_eq!(
+            strip_filler_hesitations("There will be traffic you know, because it is raining"),
+            "There will be traffic, because it is raining"
+        );
+    }
+
+    #[test]
+    fn preserves_semantic_you_know_phrases() {
+        assert_eq!(
+            strip_filler_hesitations("You know the answer"),
+            "You know the answer"
+        );
+        assert_eq!(strip_filler_hesitations("You know?"), "You know?");
+        assert_eq!(
+            strip_filler_hesitations("Please let them know tomorrow"),
+            "Please let them know tomorrow"
         );
     }
 

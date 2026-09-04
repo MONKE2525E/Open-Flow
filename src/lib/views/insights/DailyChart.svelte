@@ -37,6 +37,10 @@
     return PAD_TOP + plotH * (1 - words / max);
   }
 
+  function clampY(value: number): number {
+    return Math.max(PAD_TOP, Math.min(H - PAD_BOTTOM, value));
+  }
+
   /* Catmull-Rom control points → cubic bezier, so the area reads as a curve
      without pulling above the data the way a naive spline does. */
   const linePath = $derived.by(() => {
@@ -50,9 +54,12 @@
       const p2 = pts[i + 1];
       const p3 = pts[i + 2] ?? p2;
       const c1x = p1[0] + (p2[0] - p0[0]) / 6;
-      const c1y = p1[1] + (p2[1] - p0[1]) / 6;
+      // Catmull-Rom handles gentle curves well, but its control points can
+      // overshoot between a large spike and a zero-value day. Keeping them in
+      // the plot bounds preserves the curve without inventing negative data.
+      const c1y = clampY(p1[1] + (p2[1] - p0[1]) / 6);
       const c2x = p2[0] - (p3[0] - p1[0]) / 6;
-      const c2y = p2[1] - (p3[1] - p1[1]) / 6;
+      const c2y = clampY(p2[1] - (p3[1] - p1[1]) / 6);
       path += ` C ${c1x} ${c1y}, ${c2x} ${c2y}, ${p2[0]} ${p2[1]}`;
     }
     return path;
@@ -189,6 +196,8 @@
   .readout {
     text-align: right;
     white-space: nowrap;
+    min-width: 0;
+    flex-shrink: 1;
   }
   .readout-num {
     display: block;
@@ -216,10 +225,21 @@
   .axis {
     display: flex;
     justify-content: space-between;
+    gap: 8px;
     font-size: 10.5px;
     color: var(--ink-mute);
     margin-top: 2px;
+    min-width: 0;
   }
+
+  .axis span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .axis span:last-child { text-align: right; }
 
   rect { transition: fill var(--ui-duration-fast) var(--ui-ease-out), y var(--ui-duration-base) var(--ui-ease-out), height var(--ui-duration-base) var(--ui-ease-out); }
 
@@ -228,6 +248,19 @@
   .area-path,
   .line-path {
     transition: d var(--ui-duration-base) var(--ui-ease-out);
+  }
+
+  .line-path {
+    animation: daily-line-in 260ms var(--ui-ease-out) both;
+  }
+
+  @keyframes daily-line-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .line-path { animation: none; }
   }
 
   .hover-dot {

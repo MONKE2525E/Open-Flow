@@ -23,8 +23,10 @@ enum SettingKind {
     LocalModelMemoryPolicy,
     ModelMap,
     StringArray,
-    CleanupPromptOverrides,
+    CleanupPromptOverride,
+    ProviderModelCache,
     AppearanceMode,
+    AccentColor,
     Bool,
     MicGain,
     SoundEffectsVolume,
@@ -154,26 +156,24 @@ const SETTING_SPECS: &[SettingSpec] = &[
         true,
     ),
     setting_spec(store::SETUP_COMPLETE, SettingKind::Bool, true, false),
-    setting_spec(store::CLIPBOARD_PHRASE, SettingKind::StringOrNull, true, true),
-    setting_spec(store::CLIPBOARD_PHRASE_ENABLED, SettingKind::Bool, true, true),
-    setting_spec(store::LEGACY_FEATURES_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::APP_CONTEXT_HINT, SettingKind::Bool, true, true),
     setting_spec(store::AUTO_LEARN_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::AUTO_LEARN_EVENT_MODE, SettingKind::Bool, true, true),
-    setting_spec(store::MACOS_CLIPBOARD_SNIFF, SettingKind::Bool, true, true),
     setting_spec(store::CONTEXTUAL_CAPS, SettingKind::Bool, true, true),
     setting_spec(store::AUTO_SPACING, SettingKind::Bool, true, true),
+    setting_spec(store::CONTEXTUAL_FORMATTING, SettingKind::Bool, true, true),
     setting_spec(
         store::APPEARANCE_MODE,
         SettingKind::AppearanceMode,
         true,
         true,
     ),
+    setting_spec(store::ACCENT_COLOR, SettingKind::AccentColor, true, true),
     setting_spec(store::FORCE_SETUP_ON_LAUNCH, SettingKind::Bool, true, false),
     setting_spec(store::ADVANCED_MODEL_UI, SettingKind::Bool, true, true),
     setting_spec(
-        store::CLEANUP_PROMPT_OVERRIDES,
-        SettingKind::CleanupPromptOverrides,
+        store::CLEANUP_PROMPT_OVERRIDE,
+        SettingKind::CleanupPromptOverride,
         true,
         true,
     ),
@@ -210,9 +210,34 @@ const SETTING_SPECS: &[SettingSpec] = &[
     ),
     setting_spec(store::AUTOSTART_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::CAPS_LOCK_UPPERCASE, SettingKind::Bool, true, true),
-    setting_spec(store::CLIPBOARD_PHRASE_ENABLED, SettingKind::Bool, true, true),
-    setting_spec(store::CLIPBOARD_PHRASE, SettingKind::ClipboardPhrase, true, true),
-    setting_spec(store::LEGACY_FEATURES_ENABLED, SettingKind::Bool, true, true),
+    setting_spec(
+        store::CLIPBOARD_PHRASE_ENABLED,
+        SettingKind::Bool,
+        true,
+        true,
+    ),
+    setting_spec(
+        store::CLIPBOARD_PHRASE,
+        SettingKind::ClipboardPhrase,
+        true,
+        true,
+    ),
+    setting_spec(
+        store::LEGACY_FEATURES_ENABLED,
+        SettingKind::Bool,
+        true,
+        true,
+    ),
+    setting_spec(store::SYNC_ENABLED, SettingKind::Bool, true, false),
+    // Readable so the picker can hydrate it, never exportable: it is derived
+    // cache state, and shipping it in a settings export would carry one
+    // machine's stale provider view onto another.
+    setting_spec(
+        store::PROVIDER_MODEL_CACHE,
+        SettingKind::ProviderModelCache,
+        true,
+        false,
+    ),
 ];
 
 fn spec_for(key: &str) -> Option<&'static SettingSpec> {
@@ -253,15 +278,9 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
                 .all(|x| x.as_str().is_some_and(|s| !s.trim().is_empty()))
         })
     };
-    let is_cleanup_prompt_override_map = |v: &serde_json::Value| {
-        v.as_object().is_some_and(|obj| {
-            obj.iter().all(|(model_id, template)| {
-                store::parse_model_id(model_id).is_some()
-                    && template.as_str().is_some_and(|text| {
-                        text.chars().count() <= CLEANUP_PROMPT_OVERRIDE_CHAR_LIMIT
-                    })
-            })
-        })
+    let is_cleanup_prompt_override = |v: &serde_json::Value| {
+        v.as_str()
+            .is_some_and(|text| text.chars().count() <= CLEANUP_PROMPT_OVERRIDE_CHAR_LIMIT)
     };
     let is_valid_app_mappings = |v: &serde_json::Value| {
         let Ok(mappings) = serde_json::from_value::<Vec<AppMapping>>(v.clone()) else {
@@ -281,6 +300,53 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
                     .is_none_or(|value| {
                         value.is_empty() || store::is_supported_cleanup_intensity(value)
                     })
+        })
+    };
+    // Strict reject, not normalize: this function only answers yes/no and never
+    // mutates the value before it is saved. The catalog store is the sole
+    // writer and normalizes on its side; anything malformed reaching here is a
+    // hand-edited settings file, which should bounce rather than be guessed at.
+    let is_provider_model_cache = |v: &serde_json::Value| {
+        let Some(obj) = v.as_object() else {
+            return false;
+        };
+        obj.iter().all(|(provider, entry)| {
+            if !store::PROVIDERS.contains(&provider.as_str()) {
+                return false;
+            }
+            let Some(entry) = entry.as_object() else {
+                return false;
+            };
+            let string_array = |key: &str| {
+                entry.get(key).is_some_and(|v| {
+                    v.as_array()
+                        .is_some_and(|arr| arr.iter().all(serde_json::Value::is_string))
+                })
+            };
+            let finite_timestamp = |key: &str| {
+                entry
+                    .get(key)
+                    .is_some_and(|v| v.as_f64().is_some_and(|n| n.is_finite() && n >= 0.0))
+            };
+            string_array("ids")
+                && string_array("everSeen")
+                && finite_timestamp("lastSuccessAt")
+                && finite_timestamp("lastAttemptAt")
+                && entry
+                    .get("lastError")
+                    .is_some_and(|v| v.is_string() || v.is_null())
+                && entry.get("missing").is_some_and(|missing| {
+                    missing.as_object().is_some_and(|counters| {
+                        counters.values().all(|counter| {
+                            counter.as_object().is_some_and(|counter| {
+                                counter.get("count").is_some_and(|c| c.as_u64().is_some())
+                                    && counter.get("lastCountedAt").is_some_and(|t| {
+                                        t.as_f64().is_some_and(|n| n.is_finite() && n >= 0.0)
+                                    })
+                            })
+                        })
+                    })
+                })
         })
     };
     let Some(spec) = spec_for(key) else {
@@ -310,10 +376,21 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
             .map(store::normalize_clipboard_phrase)
             .is_some_and(|v| store::is_valid_clipboard_phrase(&v)),
         SettingKind::StringArray => is_non_empty_string_array(value),
-        SettingKind::CleanupPromptOverrides => is_cleanup_prompt_override_map(value),
+        SettingKind::CleanupPromptOverride => is_cleanup_prompt_override(value),
+        SettingKind::ProviderModelCache => is_provider_model_cache(value),
         SettingKind::AppearanceMode => value
             .as_str()
             .is_some_and(|v| matches!(v, "system" | "light" | "dark")),
+        SettingKind::AccentColor => {
+            value.is_null()
+                || value.as_str().is_some_and(|color| {
+                    color.len() == 7
+                        && color.starts_with('#')
+                        && color[1..]
+                            .chars()
+                            .all(|character| character.is_ascii_hexdigit())
+                })
+        }
         SettingKind::Bool => value.is_boolean(),
         SettingKind::MicGain => value.as_f64().is_some_and(|v| (1.0..=8.0).contains(&v)),
         SettingKind::SoundEffectsVolume => {
@@ -340,7 +417,8 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
                 && keys.iter().all(serde_json::Value::is_string)
                 && (keys.iter().all(|k| k.as_str() == Some(""))
                     || keys.iter().all(|k| {
-                        k.as_str().is_some_and(crate::core::hotkey::is_known_key_code)
+                        k.as_str()
+                            .is_some_and(crate::core::hotkey::is_known_key_code)
                     }))
         }),
     };
@@ -397,6 +475,14 @@ mod setting_key_tests {
         assert!(validate_setting(store::SOUND_EFFECTS_VOLUME, &serde_json::json!(-1)).is_err());
         assert!(validate_setting(store::SOUND_EFFECTS_VOLUME, &serde_json::json!(101)).is_err());
     }
+
+    #[test]
+    fn accent_color_accepts_hex_or_default() {
+        assert!(validate_setting(store::ACCENT_COLOR, &serde_json::json!("#4F7FD8")).is_ok());
+        assert!(validate_setting(store::ACCENT_COLOR, &serde_json::Value::Null).is_ok());
+        assert!(validate_setting(store::ACCENT_COLOR, &serde_json::json!("blue")).is_err());
+        assert!(validate_setting(store::ACCENT_COLOR, &serde_json::json!("#1234")).is_err());
+    }
 }
 // ---------- generic settings ----------
 
@@ -420,11 +506,42 @@ pub async fn save_setting(
     let settings = store::settings_handle(&app)?;
     let key_clone = key.clone();
     run_blocking("save_setting", move || {
-        settings.save_value(key_clone, value)
+        if key_clone == store::CONTEXTUAL_FORMATTING {
+            settings.set_many([
+                (store::CONTEXTUAL_FORMATTING, value.clone()),
+                (store::CONTEXTUAL_CAPS, value.clone()),
+                (store::AUTO_SPACING, value),
+            ])?;
+            settings.save()
+        } else {
+            settings.save_value(key_clone, value)
+        }
     })
     .await?;
 
-    if key == store::APPEARANCE_MODE {
+    // LAN sync: stamp the change so peers LWW-compare it, and nudge the sync
+    // manager to schedule a session. Both are best-effort — a sync failure
+    // never blocks saving a setting.
+    if crate::sync::engine::SYNCABLE_SETTINGS.contains(&key.as_str()) {
+        let db = app.state::<DbHandle>().inner().clone();
+        let key_for_stamp = key.clone();
+        let stamped = run_blocking("save_setting_stamp", move || {
+            let conn = db
+                .lock()
+                .map_err(|_| "database lock poisoned".to_string())?;
+            crate::sync::engine::record_local_setting_change(&conn, &key_for_stamp)
+                .map_err(|e| e.to_string())
+        })
+        .await;
+        if let Err(err) = stamped {
+            log::warn!("sync: failed to stamp setting change: {err}");
+        }
+        if let Some(manager) = app.try_state::<crate::sync::SyncManager>() {
+            manager.mark_dirty();
+        }
+    }
+
+    if crate::app_tray::setting_updates_runtime_icons(&key) {
         crate::apply_runtime_icons(&app, None);
     }
     if let Some(volume) = sound_effects_volume {
@@ -459,6 +576,7 @@ pub struct AllSettings {
     pub clipboard_phrase: Option<String>,
     pub clipboard_phrase_enabled: Option<bool>,
     pub legacy_features_enabled: Option<bool>,
+    pub sync_enabled: Option<bool>,
     pub transcription_provider: Option<String>,
     pub transcription_model: Option<String>,
     pub transcription_language: Option<String>,
@@ -484,6 +602,7 @@ pub struct AllSettings {
     pub auto_learn_enabled: Option<bool>,
     pub contextual_caps_enabled: Option<bool>,
     pub auto_spacing_enabled: Option<bool>,
+    pub contextual_formatting_enabled: Option<bool>,
     pub caps_lock_uppercase_enabled: Option<bool>,
     pub mic_gain: Option<f64>,
     pub history_retention: Option<String>,
@@ -496,7 +615,9 @@ pub struct AllSettings {
     pub hotkey: Option<Vec<String>>,
     pub repair_hotkey: Option<Vec<String>>,
     pub appearance_mode: Option<String>,
-    pub cleanup_prompt_overrides: Option<serde_json::Value>,
+    pub accent_color: Option<String>,
+    pub cleanup_prompt_override: Option<String>,
+    pub provider_model_cache: Option<serde_json::Value>,
 }
 
 #[derive(serde::Serialize)]
@@ -526,6 +647,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         clipboard_phrase: str_val(store::CLIPBOARD_PHRASE),
         clipboard_phrase_enabled: bool_val(store::CLIPBOARD_PHRASE_ENABLED),
         legacy_features_enabled: bool_val(store::LEGACY_FEATURES_ENABLED),
+        sync_enabled: bool_val(store::SYNC_ENABLED),
         transcription_provider: str_val(store::TRANSCRIPTION_PROVIDER),
         transcription_model: str_val(store::TRANSCRIPTION_MODEL),
         transcription_language: str_val(store::TRANSCRIPTION_LANGUAGE),
@@ -551,6 +673,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         auto_learn_enabled: bool_val(store::AUTO_LEARN_ENABLED),
         contextual_caps_enabled: bool_val(store::CONTEXTUAL_CAPS),
         auto_spacing_enabled: bool_val(store::AUTO_SPACING),
+        contextual_formatting_enabled: bool_val(store::CONTEXTUAL_FORMATTING),
         caps_lock_uppercase_enabled: bool_val(store::CAPS_LOCK_UPPERCASE),
         mic_gain: f64_val(store::MIC_GAIN),
         history_retention: str_val(store::HISTORY_RETENTION),
@@ -575,6 +698,96 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
             })
         }),
         appearance_mode: str_val(store::APPEARANCE_MODE),
-        cleanup_prompt_overrides: json_val(store::CLEANUP_PROMPT_OVERRIDES),
+        accent_color: str_val(store::ACCENT_COLOR),
+        cleanup_prompt_override: str_val(store::CLEANUP_PROMPT_OVERRIDE),
+        provider_model_cache: json_val(store::PROVIDER_MODEL_CACHE),
     })
+}
+
+#[cfg(test)]
+mod provider_model_cache_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn well_formed() -> serde_json::Value {
+        json!({
+            "groq": {
+                "ids": ["whisper-large-v3"],
+                "everSeen": ["whisper-large-v3", "llama-3.3-70b-versatile"],
+                "lastSuccessAt": 1_700_000_000_000u64,
+                "lastAttemptAt": 1_700_000_000_000u64,
+                "lastError": null,
+                "missing": {
+                    "groq/llama-3.3-70b-versatile": {
+                        "count": 1,
+                        "lastCountedAt": 1_700_000_000_000u64
+                    }
+                }
+            }
+        })
+    }
+
+    fn check(value: &serde_json::Value) -> Result<(), String> {
+        validate_setting(store::PROVIDER_MODEL_CACHE, value)
+    }
+
+    #[test]
+    fn accepts_a_well_formed_cache() {
+        check(&well_formed()).expect("well-formed cache should validate");
+    }
+
+    #[test]
+    fn accepts_an_empty_cache_and_an_error_string() {
+        check(&json!({})).expect("empty cache should validate");
+        let mut value = well_formed();
+        value["groq"]["lastError"] = json!("offline");
+        check(&value).expect("a recorded error should validate");
+    }
+
+    #[test]
+    fn rejects_unknown_provider_keys() {
+        let mut value = well_formed();
+        value["not-a-provider"] = value["groq"].clone();
+        assert!(check(&value).is_err());
+    }
+
+    #[test]
+    fn rejects_non_string_ids() {
+        let mut value = well_formed();
+        value["groq"]["ids"] = json!([1, 2]);
+        assert!(check(&value).is_err());
+        value["groq"]["ids"] = json!("whisper-large-v3");
+        assert!(check(&value).is_err());
+    }
+
+    #[test]
+    fn rejects_missing_and_non_finite_timestamps() {
+        let mut value = well_formed();
+        value["groq"]["lastSuccessAt"] = json!(-1);
+        assert!(check(&value).is_err());
+
+        let mut value = well_formed();
+        value["groq"]
+            .as_object_mut()
+            .unwrap()
+            .remove("lastAttemptAt");
+        assert!(check(&value).is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_missing_counters() {
+        let mut value = well_formed();
+        value["groq"]["missing"] = json!({ "groq/x": 2 });
+        assert!(check(&value).is_err());
+
+        let mut value = well_formed();
+        value["groq"]["missing"] = json!({ "groq/x": { "count": -1, "lastCountedAt": 0 } });
+        assert!(check(&value).is_err());
+    }
+
+    #[test]
+    fn is_readable_but_not_exportable() {
+        assert!(is_readable_setting_key(store::PROVIDER_MODEL_CACHE));
+        assert!(!is_exportable_setting_key(store::PROVIDER_MODEL_CACHE));
+    }
 }

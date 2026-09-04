@@ -14,10 +14,7 @@ pub(super) const CANCEL_RESUME_WINDOW: std::time::Duration = std::time::Duration
 /// button to pull back onto the clipboard.
 pub(super) const PASTE_FAILURE_WINDOW: std::time::Duration = std::time::Duration::from_secs(300);
 
-fn paste_failure_is_fresh(
-    captured_at: std::time::Instant,
-    now: std::time::Instant,
-) -> bool {
+fn paste_failure_is_fresh(captured_at: std::time::Instant, now: std::time::Instant) -> bool {
     now.checked_duration_since(captured_at)
         .is_some_and(|age| age < PASTE_FAILURE_WINDOW)
 }
@@ -58,6 +55,12 @@ pub struct AppState {
     pub cancelled_capture: Option<CancelledCapture>,
     pub paste_failure: Option<PasteFailure>,
     pub repair: Option<super::repair::RepairSession>,
+    /// Id of the in-flight durable dictation, if any.
+    pub failover_session_id: Option<String>,
+    /// When true, the next durable start reuses `failover_session_id` (resume).
+    pub failover_reuse_id: bool,
+    /// Wall-clock start of the current durable take, used when committing.
+    pub failover_started_at_unix: i64,
     /// Set only by the hotkey path when a Press was routed into the repair
     /// pill's complaint recording (see app_hotkey.rs) — checked and cleared
     /// on the matching Release so that release routes to the same place the
@@ -159,6 +162,21 @@ pub struct RetryCapture {
     pub caps_lock_on: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaptureOrigin {
+    UserCancelled,
+    Interrupted,
+}
+
+impl CaptureOrigin {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CaptureOrigin::UserCancelled => "cancelled",
+            CaptureOrigin::Interrupted => "interrupted",
+        }
+    }
+}
+
 /// Audio from a recording the user cancelled, kept around briefly so the
 /// pill's "Cancelled" state can offer a Continue button that resumes
 /// recording (hands-free) with this audio prepended — see
@@ -168,6 +186,10 @@ pub struct RetryCapture {
 pub struct CancelledCapture {
     pub audio: CapturedAudio,
     pub captured_at: std::time::Instant,
+    pub id: String,
+    pub origin: CaptureOrigin,
+    pub created_at_rfc3339: String,
+    pub started_at_unix: i64,
 }
 
 /// Final injected text from a dictation whose paste couldn't be confirmed
@@ -220,11 +242,11 @@ pub fn reserve_starting(state: &SharedState) -> Result<(), String> {
 /// Reads the stashed cancelled capture (cloned) if present and fresh, without
 /// consuming it — so a resume attempt that fails partway doesn't destroy the
 /// resumable audio.
-pub fn peek_cancelled_capture_if_fresh(state: &SharedState) -> Option<CapturedAudio> {
+pub fn peek_cancelled_capture_if_fresh(state: &SharedState) -> Option<CancelledCapture> {
     let st = lock_state(state).ok()?;
     st.cancelled_capture.as_ref().and_then(|c| {
         if c.captured_at.elapsed() < CANCEL_RESUME_WINDOW {
-            Some(c.audio.clone())
+            Some(c.clone())
         } else {
             None
         }
@@ -297,10 +319,7 @@ pub fn take_paste_failure_if_fresh(state: &SharedState) -> Option<String> {
     take_paste_failure_if_fresh_at(state, std::time::Instant::now())
 }
 
-fn take_paste_failure_if_fresh_at(
-    state: &SharedState,
-    now: std::time::Instant,
-) -> Option<String> {
+fn take_paste_failure_if_fresh_at(state: &SharedState, now: std::time::Instant) -> Option<String> {
     let mut st = lock_state(state).ok()?;
     st.paste_failure.take().and_then(|f| {
         if paste_failure_is_fresh(f.captured_at, now) {
@@ -617,13 +636,9 @@ pub(super) fn emit_pipeline_failed(app: &AppHandle) {
 
 /// Tells any open window (Home's history list in particular) that a
 /// recording was just cancelled and its audio is resumable for
-/// `CANCEL_RESUME_WINDOW`. Mirrors `emit_pipeline_failed`'s payload shape.
-pub(super) fn emit_cancelled_capture(app: &AppHandle) {
-    app.emit(
-        "verenu:cancelled-capture",
-        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-    )
-    .ok();
+/// `CANCEL_RESUME_WINDOW`.
+pub(super) fn emit_cancelled_capture(app: &AppHandle, capture: &CancelledCapture) {
+    super::failover::emit_cancelled_payload(app, &capture.created_at_rfc3339, capture.origin.as_str());
 }
 
 /// Tells any open window that the current cancelled capture is gone —
@@ -642,6 +657,14 @@ pub fn emit_cancelled_capture_cleared(app: &AppHandle) {
 /// issue with a provider the user actually has selected.
 pub(super) fn emit_provider_recheck(app: &AppHandle) {
     app.emit("verenu:recheck-provider-status", ()).ok();
+}
+
+/// Tells the frontend to re-check connectivity immediately because a pipeline
+/// call just failed with a connection error. The frontend re-runs its
+/// `check_connectivity` poll so the persistent "No internet connection" toast
+/// appears right away instead of on the next 60s interval.
+pub(super) fn emit_connectivity_recheck(app: &AppHandle) {
+    app.emit("verenu:recheck-connectivity", ()).ok();
 }
 
 /// Returns true if our own process currently owns the foreground window.
@@ -706,6 +729,9 @@ mod tests {
             paste_failure: None,
             repair: None,
             hotkey_recording_repair_complaint: false,
+            failover_session_id: None,
+            failover_reuse_id: false,
+            failover_started_at_unix: 0,
         }))
     }
 
@@ -744,11 +770,18 @@ mod tests {
             st.cancelled_capture = Some(CancelledCapture {
                 audio: fake_audio(500),
                 captured_at: std::time::Instant::now(),
+                id: "test-id".into(),
+                origin: CaptureOrigin::UserCancelled,
+                created_at_rfc3339: "2026-01-01T00:00:00Z".into(),
+                started_at_unix: 0,
             });
         }
         // Peeking clones — the slot must survive for the later clear.
         assert_eq!(
-            peek_cancelled_capture_if_fresh(&state).unwrap().duration_ms,
+            peek_cancelled_capture_if_fresh(&state)
+                .unwrap()
+                .audio
+                .duration_ms,
             500
         );
         assert!(lock_state(&state).unwrap().cancelled_capture.is_some());
@@ -762,6 +795,10 @@ mod tests {
             st.cancelled_capture = Some(CancelledCapture {
                 audio: fake_audio(500),
                 captured_at: std::time::Instant::now(),
+                id: "test-id".into(),
+                origin: CaptureOrigin::UserCancelled,
+                created_at_rfc3339: "2026-01-01T00:00:00Z".into(),
+                started_at_unix: 0,
             });
         }
         clear_cancelled_capture(&state);

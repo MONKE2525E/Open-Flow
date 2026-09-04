@@ -11,7 +11,7 @@
   const keyProviders: { id: ProviderId; label: string; ph: string; models: string }[] = [
     { id: 'groq',       label: 'Groq',       ph: 'gsk_…',        models: 'whisper-large-v3-turbo · llama-3.3-70b' },
     { id: 'openai',     label: 'OpenAI',     ph: 'sk-…',         models: 'gpt-4o-transcribe · gpt-4o-mini' },
-    { id: 'google',     label: 'Gemini',     ph: 'AIza…',        models: 'gemini-3.5-flash · gemini-2.5-flash' },
+    { id: 'google',     label: 'Gemini',     ph: 'AIza…',        models: 'gemini-3.5-transcribe · gemini-3.5-flash-lite' },
     { id: 'assemblyai', label: 'AssemblyAI', ph: '32-char key',  models: 'universal-3-5-pro · universal-2' },
   ];
 
@@ -68,6 +68,10 @@
       }
 
       draftKeys[provider] = '';
+      // The model picker lives in a sibling section and can only list a
+      // provider's models once the key is actually saved, so tell it now
+      // rather than making the user reopen Settings.
+      window.dispatchEvent(new CustomEvent('verenu:api-key-saved', { detail: { provider } }));
       // 'unknown' = couldn't reach the provider; we saved it anyway (might be fine)
       // but say so plainly instead of claiming it's verified.
       keyValidation[provider] =
@@ -108,7 +112,7 @@
 <p class="panel-note">Keys are stored locally and never readable from the UI after saving.</p>
 
 {#each keyProviders as item}
-  <div class="setting-row key-row">
+  <div class="setting-row key-row" data-setting-target={`api-key-${item.id}`}>
     <div class="key-left">
       <div class="label">
         <span class="key-logo">{@html getProviderLogo(item.id)}</span>
@@ -278,18 +282,19 @@
     display: inline-grid;
     min-width: 72px;
     flex-shrink: 0;
-    transform-style: preserve-3d;
-    transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+    position: relative;
   }
-  .flip-btn.flipped { transform: rotateX(180deg); }
+  .flip-btn.flipped { min-width: 72px; }
   .flip-face {
     grid-area: 1 / 1;
     width: 100%;
     text-align: center;
-    -webkit-backface-visibility: hidden;
-    backface-visibility: hidden;
+    transition: opacity 160ms var(--ui-ease-out);
   }
-  .flip-face.back { transform: rotateX(180deg); }
+  .flip-face.front { pointer-events: auto; }
+  .flip-face.back { opacity: 0; pointer-events: none; }
+  .flip-btn.flipped .flip-face.front { opacity: 0; pointer-events: none; }
+  .flip-btn.flipped .flip-face.back { opacity: 1; pointer-events: auto; }
 
   /* Failure feedback: red border + one-shot shake when a key is rejected. */
   .key-input[aria-invalid='true'] { border-color: var(--danger); }
@@ -317,7 +322,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .flip-btn { transition: none; }
+    .flip-face { transition: none; }
     .key-input.failed,
     .key-status,
     .key-status-dot { animation: none; }

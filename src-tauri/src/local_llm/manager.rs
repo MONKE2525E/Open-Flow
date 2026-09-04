@@ -3,7 +3,9 @@ use super::download::{
     cleanup_failed_download_artifacts, download_model, LocalLlmModelEventPayload,
 };
 use super::model::{built_in_model_manifests, manifest_by_id, LocalLlmModelInfo};
-use super::runtime::{request_cleanup, start_server, ManagedLocalLlmServer};
+use super::runtime::{
+    request_cleanup, request_cleanup_with_alternate, start_server, ManagedLocalLlmServer,
+};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -403,6 +405,19 @@ impl LocalLlmManager {
         prompt: &str,
         max_tokens: u32,
     ) -> anyhow::Result<String> {
+        self.cleanup_with_prompt_and_alternate(app, model_id, raw_text, prompt, None, max_tokens)
+            .await
+    }
+
+    pub async fn cleanup_with_prompt_and_alternate(
+        &self,
+        app: &AppHandle,
+        model_id: &str,
+        primary_text: &str,
+        prompt: &str,
+        alternate_text: Option<&str>,
+        max_tokens: u32,
+    ) -> anyhow::Result<String> {
         let start_gate = self
             .request_start_gate
             .lock()
@@ -420,7 +435,19 @@ impl LocalLlmManager {
             .as_ref()
             .map(|server| server.endpoint.clone())
             .ok_or_else(|| anyhow::anyhow!("local cleanup model is not loaded"))?;
-        let output = request_cleanup(&endpoint, model_id, prompt, raw_text, max_tokens).await;
+        let output = if alternate_text.is_some() {
+            request_cleanup_with_alternate(
+                &endpoint,
+                model_id,
+                prompt,
+                primary_text,
+                alternate_text,
+                max_tokens,
+            )
+            .await
+        } else {
+            request_cleanup(&endpoint, model_id, prompt, primary_text, max_tokens).await
+        };
         self.touch_activity();
         output.map_err(|err| {
             let tail = self
@@ -561,11 +588,10 @@ impl LocalLlmManager {
         }
         let manager = self.clone();
         let model_id_for_slot = model_id.to_owned();
-        let should_load = tokio::task::spawn_blocking(move || {
-            manager.wait_for_load_slot(&model_id_for_slot)
-        })
-        .await
-        .map_err(|err| anyhow::anyhow!("local cleanup loading task failed: {err}"))??;
+        let should_load =
+            tokio::task::spawn_blocking(move || manager.wait_for_load_slot(&model_id_for_slot))
+                .await
+                .map_err(|err| anyhow::anyhow!("local cleanup loading task failed: {err}"))??;
         let Some(_slot_guard) = should_load else {
             return Ok(());
         };

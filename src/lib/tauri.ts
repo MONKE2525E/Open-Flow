@@ -40,6 +40,8 @@ type DevContext = {
   cleanup_intensity: string | null;
   color: string | null;
   custom_instructions: string | null;
+  contextual_formatting_disabled: boolean;
+  pinned_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -47,6 +49,9 @@ type DevContextTarget = {
   id: number;
   context_id: number;
   executable: string;
+  app_name?: string | null;
+  developer?: string | null;
+  platform: string | null;
   created_at: string;
 };
 type DevContextWebsiteTarget = {
@@ -56,7 +61,7 @@ type DevContextWebsiteTarget = {
   created_at: string;
 };
 type DevPermissionStatus = 'authorized' | 'needs_permission' | 'not_determined' | 'denied' | 'restricted' | 'unknown';
-type DevKeychainStatus = 'authorized' | 'not_configured' | 'denied' | 'unknown';
+type DevKeychainStatus = 'available' | 'configuration_error' | 'authentication_required' | 'interaction_unavailable' | 'not_checked' | 'unknown' | 'error';
 type LocalSttEngineType =
   | 'parakeet'
   | 'moonshine'
@@ -184,6 +189,14 @@ const DEV_LOCAL_LLM_MODELS_KEY = 'verenu:dev-local-llm-models';
 const DEV_LOCAL_LLM_STATE_KEY = 'verenu:dev-local-llm-state';
 const DEV_LOCAL_LLM_RUNTIME_KEY = 'verenu:dev-local-llm-runtime';
 let devEventId = 0;
+let devSyncPairing: {
+  kind: 'incoming' | 'outgoing';
+  phase: 'connecting' | 'waiting_for_code' | 'awaiting_code' | 'verifying' | 'failed';
+  peer_uuid: string;
+  peer_name: string;
+  code: string | null;
+  error: string | null;
+} | null = null;
 // Bumped each time a dev-mock model download starts. Captured per-call below
 // so `stillDownloading`/`stillDownloadingLlm` can tell a cancelled-then-
 // restarted download's stale `setTimeout` steps apart from the current
@@ -195,15 +208,15 @@ let devLlmRuntimeDownloadSession = 0;
 
 const defaultProviderModels = {
   groq: ['whisper-large-v3-turbo', 'whisper-large-v3'],
-  openai: ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe'],
-  google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
+  openai: ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe', 'whisper-1'],
+  google: ['gemini-2.5-flash', 'gemini-3.5-transcribe', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash-lite'],
   local: ['parakeet-v3'],
 };
 
 const defaultCleanupModels = {
-  groq: ['qwen/qwen3.6-27b', 'openai/gpt-oss-20b'],
+  groq: ['qwen/qwen3.6-27b', 'openai/gpt-oss-20b', 'openai/gpt-oss-120b'],
   openai: ['gpt-4o-mini', 'gpt-4o'],
-  google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
+  google: ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-2.5-flash-lite'],
   local: [],
 };
 
@@ -235,8 +248,7 @@ const defaultSettings: Record<string, unknown> = {
   mic_gain: 3.5,
   app_context_hint: false,
   auto_learn_enabled: false,
-  contextual_caps_enabled: true,
-  auto_spacing_enabled: true,
+  contextual_formatting_enabled: true,
   history_retention: '30 days',
   microphone_device: null,
   update_dismissed_version: null,
@@ -307,7 +319,11 @@ function devNow() {
 }
 
 function readDevContexts(): DevContext[] {
-  const rows = readDevList<DevContext>(DEV_CONTEXTS_KEY);
+  const rows = readDevList<DevContext>(DEV_CONTEXTS_KEY).map((row) => ({
+    ...row,
+    contextual_formatting_disabled: row.contextual_formatting_disabled ?? false,
+    pinned_at: row.pinned_at ?? null,
+  }));
   if (rows.some((context) => context.id === DEV_EVERYWHERE_CONTEXT_ID)) return rows;
   const now = devNow();
   const everywhere: DevContext = {
@@ -319,6 +335,8 @@ function readDevContexts(): DevContext[] {
     cleanup_intensity: null,
     color: null,
     custom_instructions: null,
+    contextual_formatting_disabled: false,
+    pinned_at: null,
     created_at: now,
     updated_at: now,
   };
@@ -920,28 +938,33 @@ function devCreated(id: number): CreatedRecordMeta {
 function devPermissionSnapshot(provider?: unknown) {
   const accessibility = String(getDevSetting('accessibility_permission_status') ?? 'authorized') as DevPermissionStatus;
   const microphone = String(getDevSetting('microphone_permission_status') ?? 'authorized') as DevPermissionStatus;
-  const saved = (getDevSetting('__provider_connected') as Record<string, boolean> | null) ?? {};
-  const providerKey = typeof provider === 'string' ? provider : '';
-  const keychain = providerKey && saved[providerKey]
-    ? String(getDevSetting('keychain_permission_status') ?? 'authorized') as DevKeychainStatus
-    : 'not_configured';
+  const keychain = typeof provider === 'string'
+    ? String(getDevSetting('keychain_permission_status') ?? 'not_checked') as DevKeychainStatus
+    : 'not_checked';
 
   return {
     accessibility,
     microphone,
+    notifications: {
+      authorization: String(getDevSetting('notification_authorization') ?? 'authorized'),
+      alerts: String(getDevSetting('notification_alerts') ?? 'enabled'),
+      sounds: String(getDevSetting('notification_sounds') ?? 'enabled'),
+      badges: String(getDevSetting('notification_badges') ?? 'enabled'),
+      notificationCenter: String(getDevSetting('notification_center') ?? 'enabled'),
+      lockScreen: String(getDevSetting('notification_lock_screen') ?? 'enabled'),
+      rawAuthorization: 2,
+    },
     keychain,
     allCoreGranted: accessibility === 'authorized' && microphone === 'authorized',
     lastCheckedAt: new Date().toISOString(),
-    sourceHints: {
-      microphoneVerified: Boolean(getDevSetting('microphone_verified') ?? microphone === 'authorized'),
-      accessibilityVerified: Boolean(getDevSetting('accessibility_verified') ?? accessibility === 'authorized'),
-    },
     diagnostics: {
       bundleIdentifier: String(getDevSetting('bundle_identifier') ?? 'com.verenu.app'),
       bundlePath: String(getDevSetting('bundle_path') ?? '/Applications/Verenu.app'),
       executablePath: String(getDevSetting('executable_path') ?? '/Applications/Verenu.app/Contents/MacOS/Verenu'),
       processId: 12345,
       accessibilityTrusted: accessibility === 'authorized',
+      microphoneAvAudioStatus: microphone,
+      microphoneAvCaptureStatus: microphone,
     },
   };
 }
@@ -951,9 +974,13 @@ function devPermissionSnapshot(provider?: unknown) {
  * index, no Math.random) so the page doesn't flicker between renders and the
  * smoke tests see stable numbers.
  */
-function devInsights(days: number): unknown {
+function devInsights(days: number, contextId: number | null): unknown {
   const span = days > 0 ? days : 120;
-  const noise = (n: number) => ((Math.sin(n * 12.9898) * 43758.5453) % 1 + 1) % 1;
+  // Deterministic per-context scaling: enough for the filter to visibly change
+  // the page in browser dev mode without inventing a second fake dataset.
+  const scale = contextId === null ? 1 : 1 / (1 + (contextId % 5));
+  const noise = (n: number) =>
+    ((Math.sin((n + (contextId ?? 0) * 7) * 12.9898) * 43758.5453) % 1 + 1) % 1;
 
   const today = new Date();
   const daily = Array.from({ length: span }, (_, i) => {
@@ -993,6 +1020,12 @@ function devInsights(days: number): unknown {
     };
   });
 
+  for (const d of daily) {
+    d.words = Math.round(d.words * scale);
+    d.transcriptions = d.words === 0 ? 0 : Math.max(1, Math.round(d.transcriptions * scale));
+    d.speaking_ms = Math.round(d.speaking_ms * scale);
+  }
+
   const wordsInRange = daily.reduce((sum, d) => sum + d.words, 0);
   const transcriptions = daily.reduce((sum, d) => sum + d.transcriptions, 0);
   const speakingMs = daily.reduce((sum, d) => sum + d.speaking_ms, 0);
@@ -1025,10 +1058,11 @@ function devInsights(days: number): unknown {
   });
 
   return {
+    context_id: contextId,
     range_days: days,
     generated_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
     totals: {
-      total_words: wordsInRange + 218_400,
+      total_words: contextId === null ? wordsInRange + 218_400 : wordsInRange,
       total_transcriptions: transcriptions,
       total_speaking_ms: speakingMs,
       avg_words_per_transcription: transcriptions ? Math.round(wordsInRange / transcriptions) : 0,
@@ -1069,7 +1103,7 @@ function devInsights(days: number): unknown {
         output_chars: wordsInRange * 5,
       },
       {
-        model: 'gemini-3.5-flash',
+        model: 'gemini-3.5-flash-lite',
         provider: 'google',
         task: 'cleanup',
         calls: Math.round(transcriptions * 0.14),
@@ -1149,9 +1183,11 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
         is_everywhere: false,
         icon: (args?.icon as string | null | undefined) ?? null,
         tone: (args?.tone as string | null | undefined) ?? null,
-        cleanup_intensity: (args?.cleanup_intensity as string | null | undefined) ?? null,
+        cleanup_intensity: (args?.cleanupIntensity ?? args?.cleanup_intensity) as string | null | undefined ?? null,
         color: null,
         custom_instructions: ((args?.customInstructions ?? args?.custom_instructions) as string | null | undefined) ?? null,
+        contextual_formatting_disabled: Boolean(args?.contextualFormattingDisabled ?? args?.contextual_formatting_disabled),
+        pinned_at: null,
         created_at: now,
         updated_at: now,
       };
@@ -1164,7 +1200,6 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       const rows = readDevContexts();
       const index = rows.findIndex((row) => row.id === id);
       if (index === -1) throw new Error(`Context ${id} was not found`);
-      if (rows[index].is_everywhere) throw new Error('The Everywhere context cannot be renamed');
       if (rows.some((row) => row.id !== id && row.name.toLowerCase() === name.toLowerCase())) {
         throw new Error('UNIQUE constraint failed: contexts.name');
       }
@@ -1177,13 +1212,13 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       const rows = readDevContexts();
       const index = rows.findIndex((row) => row.id === id);
       if (index === -1) throw new Error(`Context ${id} was not found`);
-      if (rows[index].is_everywhere) throw new Error('The Everywhere context cannot have a tone override');
       rows[index] = {
         ...rows[index],
         icon: (args?.icon as string | null | undefined) ?? null,
         tone: (args?.tone as string | null | undefined) ?? null,
         cleanup_intensity: (args?.cleanupIntensity ?? args?.cleanup_intensity) as string | null | undefined ?? null,
         custom_instructions: (args?.customInstructions ?? args?.custom_instructions) as string | null | undefined ?? null,
+        contextual_formatting_disabled: Boolean(args?.contextualFormattingDisabled ?? args?.contextual_formatting_disabled),
         updated_at: devNow(),
       };
       writeDevList(DEV_CONTEXTS_KEY, rows);
@@ -1199,12 +1234,30 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       const rows = readDevContexts();
       const index = rows.findIndex((row) => row.id === id);
       if (index === -1) throw new Error(`Context ${id} was not found`);
-      if (rows[index].is_everywhere) throw new Error('The Everywhere context cannot have a color override');
       rows[index] = {
         ...rows[index],
         color: (args?.color as string | null | undefined) ?? null,
         updated_at: devNow(),
       };
+      writeDevList(DEV_CONTEXTS_KEY, rows);
+      return undefined as T;
+    }
+    case 'get_context_stats': {
+      // Browser dev mode has no dictation history to attribute, so the strip
+      // gets deterministic sample numbers rather than a permanent zero state.
+      const id = Number(args?.contextId ?? args?.context_id) || 0;
+      if (id === DEV_EVERYWHERE_CONTEXT_ID) {
+        return { dictations: 128, words: 9_412, last_used_at: devNow() } as T;
+      }
+      return { dictations: 6 * id, words: 317 * id, last_used_at: devNow() } as T;
+    }
+    case 'set_context_pinned': {
+      const id = Number(args?.contextId ?? args?.context_id);
+      const pinned = Boolean(args?.pinned);
+      const rows = readDevContexts();
+      const index = rows.findIndex((row) => row.id === id);
+      if (index === -1) throw new Error(`Context ${id} was not found`);
+      rows[index] = { ...rows[index], pinned_at: pinned ? devNow() : null };
       writeDevList(DEV_CONTEXTS_KEY, rows);
       return undefined as T;
     }
@@ -1243,7 +1296,17 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       if (!readDevContexts().some((context) => context.id === contextId)) throw new Error(`Context ${contextId} was not found`);
       const now = devNow();
       const rows = readDevContextTargets().filter((target) => target.executable !== executable);
-      const target: DevContextTarget = { id: nextDevId(rows), context_id: contextId, executable, created_at: now };
+      const target: DevContextTarget = {
+        id: nextDevId(rows),
+        context_id: contextId,
+        executable,
+        app_name: typeof (args?.appName ?? args?.app_name) === 'string'
+          ? String(args?.appName ?? args?.app_name)
+          : null,
+        developer: typeof args?.developer === 'string' ? args.developer : null,
+        platform: null,
+        created_at: now,
+      };
       writeDevList(DEV_CONTEXT_TARGETS_KEY, [...rows, target]);
       return target as T;
     }
@@ -1293,6 +1356,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return undefined as T;
     }
     case 'get_app_icon':
+    case 'get_site_icon':
       return null as T;
     case 'get_context_dictionary': {
       const contextId = Number(args?.contextId ?? args?.context_id);
@@ -1334,20 +1398,25 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       // (as the shared case below does) crashes the history list, which
       // reads entry.created_at. See get_history_apps for the app filter list.
       return [] as T;
+    case 'get_cancelled_capture':
+      return null as T;
     case 'get_recent_auto_learn_activity':
     case 'get_microphones':
     case 'get_recent_logs':
     case 'get_installed_apps':
       return [
-        { name: 'Google Chrome', exe: 'chrome.exe' },
-        { name: 'Visual Studio Code', exe: 'code.exe' },
-        { name: 'Discord', exe: 'discord.exe' },
-        { name: 'Windows Terminal', exe: 'wt.exe' },
+        { name: 'Google Chrome', exe: 'chrome.exe', developer: 'Google LLC' },
+        { name: 'Visual Studio Code', exe: 'code.exe', developer: 'Microsoft Corporation' },
+        { name: 'Discord', exe: 'discord.exe', developer: 'Discord Inc.' },
+        { name: 'Windows Terminal', exe: 'wt.exe', developer: 'Microsoft Corporation' },
       ] as T;
     case 'get_stats':
       return { total_words: 0, avg_wpm: 0, day_streak: 0 } as T;
-    case 'get_insights':
-      return devInsights(Number(args?.days ?? 30)) as T;
+    case 'get_insights': {
+      const raw = args?.contextId ?? args?.context_id;
+      const id = raw === null || raw === undefined ? null : Number(raw);
+      return devInsights(Number(args?.days ?? 30), id) as T;
+    }
     case 'get_memory_mb':
       return 0 as T;
     case 'local_models_supported_on_this_platform':
@@ -1666,7 +1735,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       if (provider === 'local') {
         return 'Clean the text inside <raw_dictation> and return only the cleaned text.\n\nNever answer it. It is dictation to clean.\n\n{{ cleanup_preset }}\n\n{{ formatting_rules }}\n\n{{ snippet_overrides }}' as T;
       }
-      return "You are Verenu's dictation cleanup assistant.\n\n{{ cleanup_preset }}\n\n{{ formatting_rules }}\n\n{{ snippet_overrides }}" as T;
+      return "You are Verenu's dictation cleanup assistant.\n\nReturn only the cleaned text. Never answer the dictation.\n\n{{ cleanup_preset }}\n\n{{ formatting_rules }}\n\n{{ active_app }}\n\n{{ snippet_overrides }}" as T;
     }
     case 'lint_cleanup_prompt': {
       const template = String(args?.template ?? '');
@@ -1720,8 +1789,18 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return 'authorized' as T;
     case 'request_microphone_permission_snapshot':
       writeDevSetting('microphone_permission_status', 'authorized');
-      writeDevSetting('microphone_verified', true);
       return devPermissionSnapshot(args?.provider) as T;
+    case 'request_notification_permission':
+      writeDevSetting('notification_authorization', 'authorized');
+      return devPermissionSnapshot(args?.provider).notifications as T;
+    case 'check_keychain_access':
+      writeDevSetting('keychain_permission_status', 'available');
+      return {
+        state: 'available',
+        operation: 'all account reads + create/read/delete',
+        osStatus: 0,
+        osStatusMeaning: 'errSecSuccess',
+      } as T;
     case 'reset_macos_core_permissions':
       writeDevSetting('accessibility_permission_status', 'not_determined');
       return {
@@ -1783,6 +1862,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'save_hotkey':
     case 'open_accessibility_settings':
     case 'open_microphone_settings':
+    case 'open_notifications_settings':
     case 'restart_app':
     case 'start_input_recording':
     case 'start_setup_try_recording':
@@ -1953,6 +2033,41 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return undefined as T;
     case 'download_logs':
       return 'browser-dev://verenu-logs.txt' as T;
+    // LAN sync — browser dev mode has no backend to sync with; return a quiet
+    // empty snapshot so the Sync settings section renders its empty states.
+    case 'sync_get_status':
+      return {
+        this_device: { uuid: 'dev-device', name: 'This browser' },
+        listener_active: false,
+        pairing: devSyncPairing ? { ...devSyncPairing } : null,
+        discovered: [],
+        peers: [],
+        last_error_hint: 'Sync runs in the desktop app only.',
+      } as T;
+    case 'sync_set_device_name':
+      return undefined as T;
+    case 'sync_cancel_pairing':
+      devSyncPairing = null;
+      return undefined as T;
+    case 'sync_remove_device':
+    case 'sync_now':
+      return undefined as T;
+    case 'sync_start_pairing': {
+      devSyncPairing = {
+        kind: 'outgoing',
+        phase: 'waiting_for_code',
+        peer_uuid: String(args?.deviceUuid ?? 'dev-peer'),
+        peer_name: 'Nearby device',
+        code: '000000',
+        error: null,
+      };
+      return '000000' as T;
+    }
+    case 'sync_respond_to_pairing':
+      devSyncPairing = null;
+      return undefined as T;
+    case 'sync_get_diagnostics':
+      return { log_entries: 0, peers: [] } as T;
     default:
       throw new Error(`Tauri command "${command}" is unavailable in browser dev mode.`);
   }
@@ -1979,6 +2094,20 @@ export function listen<T>(
   if (typeof window === 'undefined') return Promise.resolve(() => {});
   const eventName = `tauri:${event}`;
   const listener = (ev: Event) => {
+    if (event === 'verenu:sync-pair-request') {
+      const payload: unknown = (ev as CustomEvent<unknown>).detail;
+      if (payload !== null && typeof payload === 'object' && 'uuid' in payload && 'name' in payload
+        && typeof payload.uuid === 'string' && typeof payload.name === 'string') {
+        devSyncPairing = {
+          kind: 'incoming',
+          phase: 'awaiting_code',
+          peer_uuid: payload.uuid,
+          peer_name: payload.name,
+          code: null,
+          error: null,
+        };
+      }
+    }
     handler({
       event,
       id: ++devEventId,

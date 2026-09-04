@@ -19,7 +19,7 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
       cleanup_models_by_provider: {
         groq: ['qwen/qwen3.6-27b', 'openai/gpt-oss-20b'],
         openai: ['gpt-4o-mini', 'gpt-4o'],
-        google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
+        google: ['gemini-2.5-flash'],
         local: [],
       },
     },
@@ -42,48 +42,30 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
     await page.locator('.settings-nav-item:has-text("Models")').click();
     await page.locator('h2.settings-h:has-text("Models")').waitFor({ state: 'visible', timeout: TIMEOUT });
 
-    const subheads = await page.locator('h2.settings-h:has-text("Models") ~ .settings-subhead').evaluateAll((els) => els.map((el) => el.textContent?.trim()).filter(Boolean));
-    const expectedOrder = ['Model selection', 'Local models', 'Model settings'];
+    const expectedOrder = ['Model selection', 'Model settings'];
+    const subheads = await page.locator('.settings-page .panel h3.settings-subhead:visible').evaluateAll((els) => els
+      .map((el) => el.textContent?.trim())
+      .filter((text) => ['Model selection', 'Model settings'].includes(text)));
     if (subheads.join('|') !== expectedOrder.join('|')) {
       errors.push(`Models subsection order mismatch: ${subheads.join(' | ')}`);
     }
 
-    const tileCount = await page.locator('.task-tile').count();
-    if (tileCount !== 3) errors.push(`Expected 3 top-level model tiles, found ${tileCount}`);
+    const tiles = page.locator('.task-tile');
+    if (await tiles.count() !== 2) errors.push(`Expected transcription and clean-up model tiles, found ${await tiles.count()}`);
+    const cleanupTile = tiles.filter({ has: page.locator('.head-title', { hasText: 'Clean-up' }) }).first();
 
-    const cleanupTile = page.locator('.task-tile').nth(1);
-    const cleanupHead = cleanupTile.locator('.tile-head');
-    if ((await cleanupHead.getAttribute('aria-expanded')) !== 'true') {
-      await cleanupHead.click();
-    }
-    await cleanupTile.locator('.simple-provider:has-text("Local")').waitFor({ state: 'visible', timeout: TIMEOUT });
-    if (!(await cleanupTile.locator('.model-row:has-text("Qwen 2.5 3B Instruct")').isVisible().catch(() => false))) {
-      errors.push('Clean-up tile did not show the installed local cleanup model');
-    }
-    if (await cleanupTile.locator('.model-row:has-text("Gemma 4 E2B")').count()) {
-      errors.push('Clean-up tile showed a non-installed local cleanup model');
+    await cleanupTile.locator('.tile-btn-primary').click();
+    const picker = page.locator('.picker-card');
+    await picker.waitFor({ state: 'visible', timeout: TIMEOUT });
+    await picker.locator('.rail-item:has-text("Local")').click();
+    const installedLocalRow = picker.locator('.model-row').filter({ hasText: 'Qwen 2.5 3B Instruct' });
+    await installedLocalRow.waitFor({ state: 'visible', timeout: TIMEOUT });
+    if (!(await installedLocalRow.locator('.row-note:has-text("Installed")').isVisible().catch(() => false))) {
+      errors.push('Picker did not mark the installed local cleanup model as installed');
     }
 
-    // Clicking an unselected model row adds it as a fallback (the row itself
-    // is labeled "Add fallback") — it does not immediately become the active
-    // default. Swapping the active model is a two-step gesture: add the new
-    // model as a fallback, then click the current active row, which demotes
-    // it and promotes the (only) fallback to take its place.
-    await cleanupTile.locator('.model-row:has-text("Qwen 2.5 3B Instruct")').click();
-    await page.waitForFunction(
-      () => {
-        try {
-          return (JSON.parse(localStorage.getItem('verenu:dev-settings') || '{}').cleanup_fallback_models || []).includes(
-            'local/qwen2.5-3b-instruct',
-          );
-        } catch {
-          return false;
-        }
-      },
-      null,
-      { timeout: TIMEOUT },
-    );
-    await cleanupTile.locator('.model-row:has-text("Qwen3.6 27B")').click();
+    // Clicking the installed local model row selects it as the active cleanup
+    await installedLocalRow.locator('.row-main').click();
     await page.waitForFunction(
       () => {
         try {
@@ -99,46 +81,29 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
     if (stored.cleanup_default_model !== 'local/qwen2.5-3b-instruct') {
       errors.push(`cleanup_default_model did not persist local selection: ${stored.cleanup_default_model}`);
     }
-    const providerChip = (await cleanupTile.locator('.summary-item').first().textContent()) || '';
+    const providerChip = (await cleanupTile.locator('.provider-chip').textContent()) || '';
     if (!providerChip.toLowerCase().includes('local')) {
       errors.push('Clean-up summary chip did not update to Local after selecting a local cleanup model');
     }
 
-    const downloadsTile = page.locator('.task-tile').nth(2);
-    const downloadsHead = downloadsTile.locator('.tile-head');
-    if ((await downloadsHead.getAttribute('aria-expanded')) !== 'true') {
-      await downloadsHead.click();
-    }
-    await downloadsTile.locator('h3:has-text("Transcription models")').waitFor({ state: 'visible', timeout: TIMEOUT });
-    await downloadsTile.locator('h3:has-text("Cleanup models")').waitFor({ state: 'visible', timeout: TIMEOUT });
+    await cleanupTile.locator('.tile-btn-primary').click();
+    await picker.waitFor({ state: 'visible', timeout: TIMEOUT });
+    await picker.locator('.rail-item:has-text("Local")').click();
+    const gemmaRow = picker.locator('.model-row').filter({ hasText: 'Gemma 4 E2B' });
+    await gemmaRow.locator('[data-testid="download-model"]').click();
+    await gemmaRow.locator('[data-testid="cancel-model-download"]').waitFor({ state: 'visible', timeout: TIMEOUT });
+    await gemmaRow.locator('[data-testid="cancel-model-download"]').click();
+    await gemmaRow.locator('[data-testid="download-model"]').waitFor({ state: 'visible', timeout: TIMEOUT });
 
-    const advancedToggle = page.locator('[role="switch"][aria-label="Advanced Models"]');
-    await advancedToggle.waitFor({ state: 'visible', timeout: TIMEOUT });
-    if ((await advancedToggle.getAttribute('aria-checked')) !== 'true') {
-      await advancedToggle.click();
-      await page.waitForFunction(
-        () => document.querySelector('[role="switch"][aria-label="Advanced Models"]')?.getAttribute('aria-checked') === 'true',
-        null,
-        { timeout: TIMEOUT },
-      );
-    }
-
-    const cleanupBlock = downloadsTile.locator('#cleanup-models-block');
-    if (!(await cleanupBlock.locator('button:has-text("Show 6 more")').isVisible().catch(() => false))) {
-      errors.push('Cleanup downloads block did not render its Show more control');
-    }
-
-    const gemmaCard = cleanupBlock.locator('[data-model-type="cleanup"][data-model-id="gemma-4-e2b"]').first();
-    await gemmaCard.locator('[data-testid="edit-prompt"]').waitFor({ state: 'visible', timeout: TIMEOUT });
-    await gemmaCard.locator('[data-testid="edit-prompt"]').click();
-    await page.locator('.prompt-modal-card').waitFor({ state: 'visible', timeout: TIMEOUT });
-    await page.locator('.prompt-modal-card .prompt-btn:has-text("Save")').click();
-    await page.locator('.prompt-modal-card').waitFor({ state: 'hidden', timeout: TIMEOUT });
-
-    await gemmaCard.locator('[data-testid="download-model"]').click();
-    await gemmaCard.locator('[data-testid="cancel-model-download"]').waitFor({ state: 'visible', timeout: TIMEOUT });
-    await gemmaCard.locator('[data-testid="cancel-model-download"]').click();
-    await gemmaCard.locator('[data-testid="download-model"]').waitFor({ state: 'visible', timeout: TIMEOUT });
+    // One cleanup prompt covers every model now, so it is edited from the tile
+    // rather than from a per-model button inside the picker.
+    await picker.locator('.picker-close').click();
+    await picker.waitFor({ state: 'hidden', timeout: TIMEOUT });
+    await cleanupTile.locator('.tile-btn', { hasText: 'Edit prompt' }).click();
+    const promptCard = page.locator('.prompt-modal-card');
+    await promptCard.waitFor({ state: 'visible', timeout: TIMEOUT });
+    await promptCard.locator('.prompt-btn:has-text("Save")').click();
+    await promptCard.waitFor({ state: 'hidden', timeout: TIMEOUT });
 
     if (errors.length) {
       console.error('FAIL');
@@ -154,3 +119,4 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
     await browser.close();
   }
 })();
+

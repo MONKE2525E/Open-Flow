@@ -27,17 +27,16 @@
   import { animateWidth, MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
   import Toggle from '../Toggle.svelte';
   import Dropdown from '../Dropdown.svelte';
-  import { appStore, cleanupPromptOverridesStore } from '../../stores.svelte';
+  import { appStore, cleanupPromptStore } from '../../stores.svelte';
   import {
     saveSetting,
     type LocalModelMemoryPolicy,
     type ProviderId,
     type ProviderModelMap,
   } from '../../settings';
-  import LocalTranscriptionDownloads from './LocalTranscriptionDownloads.svelte';
-  import LocalCleanupDownloads from './LocalCleanupDownloads.svelte';
   import ModelTaskTile from './ModelTaskTile.svelte';
   import ModelPresetPicker from './ModelPresetPicker.svelte';
+  import { settingsSearchNavigation } from '../../settingsSearch.svelte';
   import {
     getHardware,
     type ActiveConfig,
@@ -48,6 +47,15 @@
   } from './modelPresets';
   import { transcriptionModelStore } from '../../transcriptionModelStore.svelte';
   import {
+    hydrateCatalogCache,
+    modelCatalogStore,
+    refreshCatalog,
+    refreshStaleCatalogs,
+    trackedIds,
+  } from '../../modelCatalogStore.svelte';
+  import { type LocalControls, type PickerContext } from './modelStates';
+  import {
+    CATALOG,
     emptyProviderModelMap,
     mergeProviderModelMap,
     modelId,
@@ -103,6 +111,64 @@
     transcription: localSttStore.models.filter((model) => model.is_downloaded).map((model) => model.id),
     cleanup: localLlmStore.models.filter((model) => model.is_downloaded).map((model) => model.id),
   });
+
+  /**
+   * Local models are downloaded, deleted and prompt-edited from inside the
+   * picker now. The old "Local models" section listed the very same models a
+   * second time under a different UI, which is what made the page feel like
+   * two products stapled together.
+   */
+  function localControls(type: TaskType): LocalControls {
+    if (type === 'transcription') {
+      return {
+        supported: localModelsSupported,
+        models: localSttStore.models,
+        downloadProgress: localSttStore.downloadProgress,
+        downloadStage: localSttStore.downloadStage,
+        onDownload: (id) => downloadLocalModel(id).catch((err) => console.error('download stt model failed', err)),
+        onCancel: (id) => cancelLocalModelDownload(id).catch((err) => console.error('cancel stt download failed', err)),
+        onDelete: (id) => handleDeleteTranscriptionModel(id).catch((err) => console.error('delete stt model failed', err)),
+      };
+    }
+    return {
+      supported: localModelsSupported,
+      models: localLlmStore.models,
+      downloadProgress: localLlmStore.downloadProgress,
+      downloadStage: localLlmStore.downloadStage,
+      onDownload: (id) => downloadLocalLlmModel(id).catch((err) => console.error('download llm model failed', err)),
+      onCancel: (id) => cancelLocalLlmModelDownload(id).catch((err) => console.error('cancel llm download failed', err)),
+      onDelete: (id) => handleDeleteCleanupModel(id).catch((err) => console.error('delete llm model failed', err)),
+      runtime: {
+        info: localLlmStore.runtime,
+        progress: localLlmStore.runtimeDownloadProgress,
+        onDownload: () => downloadLocalLlmRuntime().catch((err) => console.error('download runtime failed', err)),
+        onCancel: () => cancelLocalLlmRuntimeDownload().catch((err) => console.error('cancel runtime download failed', err)),
+        onDelete: () => deleteLocalLlmRuntime().catch((err) => console.error('delete runtime failed', err)),
+      },
+    };
+  }
+
+  /** Everything the picker needs to classify a model, per task. */
+  function pickerContext(type: TaskType): PickerContext {
+    return {
+      task: type,
+      apiKeyStatus,
+      cache: modelCatalogStore.cache,
+      localModels: type === 'transcription' ? localSttStore.models : localLlmStore.models,
+      hardware,
+    };
+  }
+
+  /** Selections plus the curated catalog — the ids worth counting misses for. */
+  function trackedModelIds(): string[] {
+    const selected = [
+      transcriptionDefaultModel,
+      ...transcriptionFallbackModels,
+      cleanupDefaultModel,
+      ...cleanupFallbackModels,
+    ].filter(Boolean);
+    return trackedIds(selected, CATALOG);
+  }
 
   const downloadingLocal = $derived({
     transcription: localSttStore.state.downloading_model_id ?? null,
@@ -260,37 +326,9 @@
     }
   });
 
-  let customDrafts = $state<Record<TaskType, Record<UiProviderId, string>>>({
-    transcription: { groq: '', openai: '', google: '', assemblyai: '' },
-    cleanup: { groq: '', openai: '', google: '', assemblyai: '' },
-  });
-
-  /*
-   * The four expandable model panels behave as one accordion: opening any of
-   * them closes whichever was open. They're tall enough that two at once pushes
-   * the rest of the section off-screen, and only one is ever being acted on.
-   * A single id rather than four booleans makes that structural — there is no
-   * state in which two can be open.
-   */
-  type ModelPanelId = TaskType | 'local-stt' | 'local-llm';
-  let openPanel = $state<ModelPanelId | null>('local-stt');
-  // Set once the user touches any panel, so the one-shot auto-open effects
-  // below can never yank a panel closed underneath them.
-  let userChosePanel = $state(false);
-
-  function isPanelOpen(id: ModelPanelId) {
-    return openPanel === id;
-  }
-
-  function togglePanel(id: ModelPanelId) {
-    userChosePanel = true;
-    openPanel = openPanel === id ? null : id;
-  }
-
-  function revealPanel(id: ModelPanelId) {
-    userChosePanel = true;
-    openPanel = id;
-  }
+  // One draft per task now that the custom-id field lives in the picker
+  // rather than once per provider group.
+  let customDrafts = $state<Record<TaskType, string>>({ transcription: '', cleanup: '' });
 
   let advancedModelUi = $state(false);
   let localModelMemoryPolicy = $state<LocalModelMemoryPolicy>('unload_after_5m');
@@ -300,40 +338,6 @@
   // Defaults to true (never assume unsupported) until the one-time check
   // resolves, since almost every user is on a supported platform.
   let localModelsSupported = $state(true);
-  // Local model lists load asynchronously (onMount), so the very first render
-  // always sees an empty store regardless of what's actually downloaded —
-  // opening a panel here and then never re-checking would mean a returning user
-  // with models already installed still gets it popped open. So: start on the
-  // speech-to-text downloads (a reasonable pre-data-load guess that nudges
-  // first-time users toward downloading something), then correct exactly once
-  // per category as its list arrives.
-  //
-  // Each correction only acts on an untouched accordion — it will never close a
-  // panel the user opened, and never displace one another effect already chose.
-  // A user with speech-to-text installed but no cleanup model therefore lands on
-  // the cleanup downloads; a user with both installed lands with all four shut.
-  let localTranscriptionAutoOpenDecided = $state(false);
-  let localCleanupAutoOpenDecided = $state(false);
-
-  $effect(() => {
-    if (userChosePanel || localTranscriptionAutoOpenDecided) return;
-    if (localSttStore.models.length === 0) return;
-    localTranscriptionAutoOpenDecided = true;
-    if (localSttStore.models.some((model) => model.is_downloaded) && openPanel === 'local-stt') {
-      openPanel = null;
-    }
-  });
-
-  $effect(() => {
-    if (userChosePanel || localCleanupAutoOpenDecided) return;
-    if (!localTranscriptionAutoOpenDecided) return;
-    if (localLlmStore.models.length === 0) return;
-    localCleanupAutoOpenDecided = true;
-    if (openPanel === null && !localLlmStore.models.some((model) => model.is_downloaded)) {
-      openPanel = 'local-llm';
-    }
-  });
-
   const LOCAL_MEMORY_POLICY_MENU_ID = 'models-local-memory-policy-menu';
   const localMemoryPolicyOptions: { value: LocalModelMemoryPolicy; label: string }[] = [
     { value: 'unload_after_5m', label: 'Unload after 5 minutes' },
@@ -353,14 +357,6 @@
       default:
         return 'Unload after 5 minutes';
     }
-  }
-
-  function isOpen(type: TaskType) {
-    return isPanelOpen(type);
-  }
-
-  function toggleTaskOpen(type: TaskType) {
-    togglePanel(type);
   }
 
   function taskMap(type: TaskType): ProviderModelMap {
@@ -406,8 +402,8 @@
     }
   }
 
-  // A deleted local model disappears from its row list entirely (LocalModelGroup
-  // only renders downloaded models), so if it was selected there is no row left
+  // A deleted local model drops out of the picker's Ready list entirely (only
+  // downloaded models appear there), so if it was selected there is no row left
   // to click to deselect it. Reassign to another installed local model for this
   // task, or fall back to Groq's recommended model, so the selection never points
   // at something that no longer exists.
@@ -542,6 +538,7 @@
     ]);
 
     apiKeyStatus = { ...apiKeyStatus, ...keyStatus, local: true };
+    hydrateCatalogCache(all.provider_model_cache);
     if (typeof cleanupRaw === 'boolean') {
       cleanupEnabled = cleanupRaw;
       appStore.cleanupEnabled = cleanupRaw;
@@ -613,22 +610,8 @@
     ) {
       localModelMemoryPolicy = all.local_model_memory_policy;
     }
-    let cleanupPromptOverridesChanged = false;
-    if (all.cleanup_prompt_overrides && typeof all.cleanup_prompt_overrides === 'object') {
-      const overrides: Record<string, string> = {};
-      const rawOverrides = all.cleanup_prompt_overrides as Record<string, unknown>;
-      for (const [key, value] of Object.entries(rawOverrides)) {
-        if (typeof value === 'string') {
-          const parsed = splitModelId(key);
-          const normalizedKey = parsed?.provider === 'groq'
-            ? modelId('groq', migrateDeprecatedGroqCleanupModel(parsed.model))
-            : key;
-          overrides[normalizedKey] = value;
-        }
-      }
-      cleanupPromptOverridesChanged = JSON.stringify(overrides) !== JSON.stringify(all.cleanup_prompt_overrides);
-      cleanupPromptOverridesStore.overrides = overrides;
-    }
+    cleanupPromptStore.override =
+      typeof all.cleanup_prompt_override === 'string' ? all.cleanup_prompt_override : '';
 
     const preTranscriptionDefault = transcriptionDefaultModel;
     const preCleanupDefault = cleanupDefaultModel;
@@ -650,14 +633,10 @@
       || transcriptionFallbackModels.length !== preTranscriptionFallbackCount
       || cleanupFallbackModels.length !== preCleanupFallbackCount
       || JSON.stringify(cleanupFallbackModels) !== JSON.stringify(preCleanupFallbackModels)
-      || cleanupModelMapChanged
-      || cleanupPromptOverridesChanged;
+      || cleanupModelMapChanged;
 
     if (changed) {
       await persistAll();
-      if (cleanupPromptOverridesChanged) {
-        await saveSetting('cleanup_prompt_overrides', cleanupPromptOverridesStore.overrides);
-      }
     }
 
     await Promise.all([
@@ -695,95 +674,59 @@
     }
   }
 
-  function updateCustomDraft(type: TaskType, provider: UiProviderId, value: string) {
-    customDrafts = {
-      ...customDrafts,
-      [type]: {
-        ...customDrafts[type],
-        [provider]: value,
-      },
+  /** Makes a model the active one, pushing the previous default aside. */
+  function selectModel(type: TaskType, id: string) {
+    const parsed = splitModelId(id);
+    if (!parsed) return;
+    ensureModelsContainSelection(type, parsed.provider, parsed.model);
+    // Picking a model that was a fallback promotes it rather than leaving it
+    // in the chain twice.
+    setTaskFallbacks(type, taskFallbacks(type).filter((entry) => entry !== id));
+    setTaskDefault(type, id);
+    persistAll().catch((err) => console.error('persist model selection failed', err));
+  }
+
+  function addFallbackModel(type: TaskType, id: string) {
+    const parsed = splitModelId(id);
+    if (!parsed) return;
+    if (taskDefault(type) === id || taskFallbacks(type).includes(id)) return;
+    ensureModelsContainSelection(type, parsed.provider, parsed.model);
+    setTaskFallbacks(type, [...taskFallbacks(type), id]);
+    persistAll().catch((err) => console.error('persist fallback add failed', err));
+  }
+
+  function removeFallbackModel(type: TaskType, id: string) {
+    setTaskFallbacks(type, taskFallbacks(type).filter((entry) => entry !== id));
+    persistAll().catch((err) => console.error('persist fallback removal failed', err));
+  }
+
+  function moveFallbackModel(type: TaskType, id: string, delta: -1 | 1) {
+    const chain = [...taskFallbacks(type)];
+    const index = chain.indexOf(id);
+    const next = index + delta;
+    if (index === -1 || next < 0 || next >= chain.length) return;
+    [chain[index], chain[next]] = [chain[next], chain[index]];
+    setTaskFallbacks(type, chain);
+    persistAll().catch((err) => console.error('persist fallback reorder failed', err));
+  }
+
+  function setCustomDraft(type: TaskType, value: string) {
+    customDrafts = { ...customDrafts, [type]: value };
+  }
+
+  /** Adds a hand-typed id and makes it active — you typed it to use it. */
+  function addCustomModelForTask(type: TaskType, draft: string) {
+    const raw = draft.trim();
+    if (!raw) return;
+    // A bare id with no provider prefix belongs to whoever is active now.
+    const parsed = splitModelId(raw) ?? {
+      provider: splitModelId(taskDefault(type))?.provider ?? 'groq',
+      model: raw,
     };
-  }
-
-  function addCustomModel(type: TaskType, provider: ProviderId, draft: string) {
-    let custom = draft.trim();
-    if (!custom) return;
-
-    let targetProvider = provider;
-    const ownPrefix = `${provider}/`;
-    if (custom.toLowerCase().startsWith(ownPrefix)) {
-      custom = custom.slice(ownPrefix.length).trim();
-    } else if (custom.includes('/')) {
-      const parsed = splitModelId(custom);
-      if (!parsed) return;
-      targetProvider = parsed.provider;
-      custom = parsed.model;
-    }
-    if (!custom) return;
-
-    ensureModelsContainSelection(type, targetProvider, custom);
-    const sectionId = provider as UiProviderId;
-    customDrafts = {
-      ...customDrafts,
-      [type]: {
-        ...customDrafts[type],
-        [sectionId]: '',
-      },
-    };
-
-    persistAll().catch((err) => console.error('persist custom model failed', err));
-  }
-
-  function removeCustomModel(type: TaskType, provider: ProviderId, modelName: string) {
-    const id = modelId(provider, modelName);
-    if (taskFallbacks(type).includes(id)) {
-      setTaskFallbacks(type, taskFallbacks(type).filter((entry) => entry !== id));
-    }
-
-    if (taskDefault(type) === id) {
-      const fallbacks = taskFallbacks(type);
-      if (fallbacks.length > 0) {
-        const [nextActive, ...remaining] = fallbacks;
-        setTaskDefault(type, nextActive);
-        setTaskFallbacks(type, remaining);
-      } else {
-        const safeProvider: UiProviderId = provider !== 'local' ? (provider as UiProviderId) : 'groq';
-        const recommended = recommendedModels[type][safeProvider] ?? recommendedModels[type].groq;
-        const fallbackProvider = recommendedModels[type][safeProvider] ? safeProvider : 'groq';
-        if (recommended) setTaskDefault(type, modelId(fallbackProvider, recommended.standard));
-      }
-    }
-
-    const map = taskMap(type);
-    setTaskMap(type, { ...map, [provider]: map[provider].filter((model) => model !== modelName) });
-    persistAll().catch((err) => console.error('persist custom model removal failed', err));
-  }
-
-  function toggleModelSelection(type: TaskType, provider: ProviderId, modelName: string) {
-    const id = modelId(provider, modelName);
-    ensureModelsContainSelection(type, provider, modelName);
-
-    if (taskDefault(type) === id) {
-      const fallbacks = taskFallbacks(type);
-      if (fallbacks.length > 0) {
-        const [nextActive, ...remaining] = fallbacks;
-        setTaskDefault(type, nextActive);
-        setTaskFallbacks(type, remaining);
-      } else {
-        const safeProvider: UiProviderId = provider !== 'local' ? (provider as UiProviderId) : 'groq';
-        const recommended = recommendedModels[type][safeProvider] ?? recommendedModels[type].groq;
-        const fallbackProvider = recommendedModels[type][safeProvider] ? safeProvider : 'groq';
-        if (recommended) setTaskDefault(type, modelId(fallbackProvider, recommended.standard));
-      }
-    } else if (taskFallbacks(type).includes(id)) {
-      setTaskFallbacks(type, taskFallbacks(type).filter((entry) => entry !== id));
-    } else if (!splitModelId(taskDefault(type))) {
-      setTaskDefault(type, id);
-    } else {
-      setTaskFallbacks(type, [...taskFallbacks(type), id]);
-    }
-
-    persistAll().catch((err) => console.error('persist model toggle failed', err));
+    if (!parsed.model) return;
+    ensureModelsContainSelection(type, parsed.provider, parsed.model);
+    setCustomDraft(type, '');
+    selectModel(type, modelId(parsed.provider, parsed.model));
   }
 
   async function handleAdvancedModelUi(value: boolean) {
@@ -795,6 +738,13 @@
       console.error('save advanced_model_ui failed:', err);
     }
   }
+
+  $effect(() => {
+    const target = settingsSearchNavigation.request?.target;
+    if (target?.startsWith('models-') && !advancedModelUi) {
+      void handleAdvancedModelUi(true);
+    }
+  });
 
   let transcriptionModeDropdownOpen = $state(false);
 
@@ -819,26 +769,9 @@
     }
   }
 
-  async function scrollToAnchor(anchorId: string) {
-    await tick();
-    requestAnimationFrame(() => {
-      document.getElementById(anchorId)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    });
-  }
-
   // Reached from "Manage local models" inside a task tile — revealing the
   // downloads necessarily closes the tile it was launched from, which is the
   // point: the user asked to go there.
-  function openLocalTranscriptionDownloads() {
-    revealPanel('local-stt');
-    scrollToAnchor('transcription-models-block');
-  }
-
-  function openLocalCleanupDownloads() {
-    revealPanel('local-llm');
-    scrollToAnchor('cleanup-models-block');
-  }
-
   onMount(() => {
     refreshLocalModels().catch((err) => console.error('refresh local models failed', err));
     refreshLocalState().catch((err) => console.error('refresh local state failed', err));
@@ -857,6 +790,25 @@
     getHardware()
       .then((hw) => (hardware = hw))
       .catch((err) => console.error('read hardware capabilities failed', err));
+
+    const onKeySaved = async (event: Event) => {
+      const provider = (event as CustomEvent<{ provider: ProviderId }>).detail?.provider;
+      if (!provider) return;
+      apiKeyStatus = { ...apiKeyStatus, [provider]: true };
+      // Refresh on save, not on validation: validation checks an unsaved key
+      // held in JS, and list_provider_models only ever reads the stored one.
+      await refreshCatalog(provider, trackedModelIds());
+    };
+    window.addEventListener('verenu:api-key-saved', onKeySaved);
+    return () => window.removeEventListener('verenu:api-key-saved', onKeySaved);
+  });
+
+  // Settings just opened: top up any provider whose list has gone stale, or
+  // that failed long enough ago to be worth another try.
+  $effect(() => {
+    refreshStaleCatalogs(apiKeyStatus, trackedModelIds()).catch((err) =>
+      console.error('refresh model catalogs failed', err),
+    );
   });
 
   migrateAndLoad().catch((err) => console.error('load models failed', err));
@@ -864,20 +816,22 @@
 
 <h2 class="settings-h">Models</h2>
 
-<ModelPresetPicker
-  {apiKeyStatus}
-  {hardware}
-  localSupported={localModelsSupported}
-  {activeConfig}
-  {installedLocal}
-  {downloadingLocal}
-  onApplyPreset={applyPreset}
-  onOpenApiKeys={openApiKeysSection}
-  onCancelPreset={cancelPresetDownload}
-  onDeletePreset={deletePresetModels}
-/>
+<div data-setting-target="model-presets">
+  <ModelPresetPicker
+    {apiKeyStatus}
+    {hardware}
+    localSupported={localModelsSupported}
+    {activeConfig}
+    {installedLocal}
+    {downloadingLocal}
+    onApplyPreset={applyPreset}
+    onOpenApiKeys={openApiKeysSection}
+    onCancelPreset={cancelPresetDownload}
+    onDeletePreset={deletePresetModels}
+  />
+</div>
 
-<div class="advanced-toggle-row">
+<div class="advanced-toggle-row" data-setting-target="advanced-models">
   <div class="adv-text">
     <span class="adv-label">Advanced Models</span>
     <span class="adv-desc">Choose specific models, edit cleanup prompts, and manage downloads</span>
@@ -890,87 +844,42 @@
 <h3 class="settings-subhead">Model selection</h3>
 <ModelTaskTile
   type="transcription"
-  opened={isOpen('transcription')}
   {advancedModelUi}
   {apiKeyStatus}
-  modelsByProvider={taskMap('transcription')}
-  defaultModel={taskDefault('transcription')}
-  fallbackModels={taskFallbacks('transcription')}
-  customDrafts={customDrafts.transcription}
-  localModels={localSttStore.models.filter((model) => model.is_downloaded)}
-  onToggleOpen={toggleTaskOpen}
-  onToggleModel={toggleModelSelection}
-  onRemoveCustomModel={removeCustomModel}
-  onCustomDraftChange={updateCustomDraft}
-  onAddCustomModel={addCustomModel}
-  onManageLocalModels={openLocalTranscriptionDownloads}
+  context={pickerContext('transcription')}
+  defaultModel={transcriptionDefaultModel}
+  fallbackModels={transcriptionFallbackModels}
+  customDraft={customDrafts.transcription}
+  onSelectModel={selectModel}
+  onAddFallback={addFallbackModel}
+  onRemoveFallback={removeFallbackModel}
+  onMoveFallback={moveFallbackModel}
+  onCustomDraftChange={setCustomDraft}
+  onAddCustomModel={addCustomModelForTask}
+  onOpenApiKeys={openApiKeysSection}
+  local={localControls('transcription')}
 />
 
 <ModelTaskTile
   type="cleanup"
-  opened={isOpen('cleanup')}
   {advancedModelUi}
   {apiKeyStatus}
-  modelsByProvider={taskMap('cleanup')}
-  defaultModel={taskDefault('cleanup')}
-  fallbackModels={taskFallbacks('cleanup')}
-  customDrafts={customDrafts.cleanup}
-  localModels={localLlmStore.models.filter((model) => model.is_downloaded)}
-  onToggleOpen={toggleTaskOpen}
-  onToggleModel={toggleModelSelection}
-  onRemoveCustomModel={removeCustomModel}
-  onCustomDraftChange={updateCustomDraft}
-  onAddCustomModel={addCustomModel}
-  onManageLocalModels={openLocalCleanupDownloads}
+  context={pickerContext('cleanup')}
+  defaultModel={cleanupDefaultModel}
+  fallbackModels={cleanupFallbackModels}
+  customDraft={customDrafts.cleanup}
+  onSelectModel={selectModel}
+  onAddFallback={addFallbackModel}
+  onRemoveFallback={removeFallbackModel}
+  onMoveFallback={moveFallbackModel}
+  onCustomDraftChange={setCustomDraft}
+  onAddCustomModel={addCustomModelForTask}
+  onOpenApiKeys={openApiKeysSection}
+  local={localControls('cleanup')}
 />
 
-<h3 class="settings-subhead">Local models</h3>
-{#if localModelsSupported}
-  <LocalTranscriptionDownloads
-    opened={isPanelOpen('local-stt')}
-    onToggleOpen={() => togglePanel('local-stt')}
-    transcriptionModels={localSttStore.models}
-    transcriptionState={localSttStore.state}
-    selectedTranscriptionModelId={transcriptionDefaultModel}
-    transcriptionDownloadProgress={localSttStore.downloadProgress}
-    transcriptionDownloadStage={localSttStore.downloadStage}
-    onDownloadTranscriptionModel={downloadLocalModel}
-    onCancelTranscriptionDownload={cancelLocalModelDownload}
-    onDeleteTranscriptionModel={handleDeleteTranscriptionModel}
-  />
-
-  <LocalCleanupDownloads
-    opened={isPanelOpen('local-llm')}
-    onToggleOpen={() => togglePanel('local-llm')}
-    advancedModelUi={advancedModelUi}
-    cleanupModels={localLlmStore.models}
-    cleanupState={localLlmStore.state}
-    selectedCleanupModelId={cleanupDefaultModel}
-    cleanupDownloadProgress={localLlmStore.downloadProgress}
-    cleanupDownloadStage={localLlmStore.downloadStage}
-    onDownloadCleanupModel={downloadLocalLlmModel}
-    onCancelCleanupDownload={cancelLocalLlmModelDownload}
-    onDeleteCleanupModel={handleDeleteCleanupModel}
-    runtimeInfo={localLlmStore.runtime}
-    runtimeDownloadProgress={localLlmStore.runtimeDownloadProgress}
-    onDownloadRuntime={downloadLocalLlmRuntime}
-    onCancelRuntimeDownload={cancelLocalLlmRuntimeDownload}
-    onDeleteRuntime={deleteLocalLlmRuntime}
-  />
-{:else}
-  <div class="local-models-unsupported">
-    <p>
-      <strong>Not available on Intel Macs yet.</strong> On-device speech-to-text and cleanup models
-      haven't been tested on Intel hardware, and older Intel Macs are generally underpowered for
-      running a local LLM well. Rather than risk a broken first run, this is turned off here until
-      it's been validated on real Intel Mac hardware.
-    </p>
-    <p>Use a cloud provider (Groq, OpenAI, or Google) above in the meantime — full accuracy, no download.</p>
-  </div>
-{/if}
-
 <h3 class="settings-subhead">Model settings</h3>
-<div class="setting-row transcription-mode-row">
+<div class="setting-row transcription-mode-row" data-setting-target="models-strategy">
   <div>
     <div class="label">Transcription strategy</div>
     <div class="desc">Use one model, or compare two working models from the existing transcription fallback chain before cleanup.</div>
@@ -1031,7 +940,7 @@
 </div>
 {/if}
 
-<div class="setting-row">
+<div class="setting-row" data-setting-target="models-memory">
   <div>
     <div class="label">Memory policy</div>
     <div class="desc">Controls when idle local models are unloaded.</div>
@@ -1081,7 +990,7 @@
   </Dropdown>
 </div>
 
-<div class="setting-row">
+<div class="setting-row" data-setting-target="models-folder">
   <div>
     <div class="label">Models folder</div>
     <div class="desc">Open the shared folder where local transcription and cleanup models are stored.</div>
@@ -1090,27 +999,9 @@
 </div>
 
 <style>
-  .local-models-unsupported {
-    padding: 12px 14px;
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    background: color-mix(in srgb, var(--paper) 55%, var(--bg-elev));
-  }
 
-  .local-models-unsupported p {
-    margin: 0;
-    font-size: 12.5px;
-    line-height: 1.5;
-    color: var(--ink-mute);
-  }
 
-  .local-models-unsupported p + p {
-    margin-top: 8px;
-  }
 
-  .local-models-unsupported strong {
-    color: var(--ink-soft);
-  }
 
   /* Only a top border — the row below it (the advanced block's first tile when
      expanded, or the Memory policy row when collapsed) supplies its own top

@@ -8,7 +8,15 @@
 	<string>Verenu</string>
 	<key>CFBundleName</key>
 	<string>Verenu</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.verenu.app</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Verenu uses the microphone to transcribe your dictation into text.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Verenu discovers and syncs with your devices on the local network.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_verenu._tcp</string>
+	</array>
 </dict>
 </plist>

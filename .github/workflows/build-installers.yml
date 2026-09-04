@@ -13,7 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: blacksmith-4vcpu-windows-2025
+          - platform: windows-latest
             os-name: windows
           - platform: macos-latest
             os-name: macos
@@ -35,6 +35,108 @@ jobs:
       - name: Set up macOS targets
         if: matrix.os-name == 'macos'
         run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+
+      - name: Set up Python for Intel ONNX Runtime
+        if: matrix.os-name == 'macos'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Cache Intel ONNX Runtime
+        if: matrix.os-name == 'macos'
+        id: intel_ort_cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/verenu/onnxruntime/1.24.2-x86_64
+          key: verenu-onnxruntime-1.24.2-macos-x86_64
+
+      - name: Build Intel ONNX Runtime from source
+        if: matrix.os-name == 'macos' && steps.intel_ort_cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ort_root="$HOME/.cache/verenu/onnxruntime/1.24.2-x86_64"
+          ort_source="$ort_root/source"
+          mkdir -p "$(dirname "$ort_root")"
+
+          git clone --depth 1 --branch v1.24.2 --recurse-submodules \
+            https://github.com/microsoft/onnxruntime.git "$ort_source"
+          cd "$ort_source"
+
+          ./build.sh \
+            --config RelWithDebInfo \
+            --build_shared_lib \
+            --parallel \
+            --compile_no_warning_as_error \
+            --skip_submodule_sync \
+            --skip_tests \
+            --skip_onnx_tests \
+            --cmake_extra_defines \
+              CMAKE_OSX_ARCHITECTURES=x86_64 \
+              CMAKE_OSX_DEPLOYMENT_TARGET=13.4
+
+      - name: Stage Intel ONNX Runtime libraries
+        if: matrix.os-name == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ort_build_root="$HOME/.cache/verenu/onnxruntime/1.24.2-x86_64/source/build/MacOS"
+          ort_build_profile="$ort_build_root/RelWithDebInfo"
+          ort_shared="$ort_build_profile/libonnxruntime.dylib"
+          ort_link_root="$HOME/.cache/verenu/onnxruntime/1.24.2-x86_64/ort-link"
+          ort_link_profile="$ort_link_root/RelWithDebInfo"
+
+          test -f "$ort_shared"
+          lipo -info "$ort_shared" | grep -q 'x86_64'
+          mkdir -p "$ort_link_profile"
+
+          archive_count=0
+          while IFS= read -r archive; do
+            ln -sfn "$archive" "$ort_link_profile/$(basename "$archive")"
+            archive_count=$((archive_count + 1))
+          done < <(find "$ort_build_profile" -maxdepth 1 -type f -name 'libonnxruntime_*.a' -print)
+          test "$archive_count" -gt 0
+
+          for required in \
+            libonnxruntime_common.a \
+            libonnxruntime_framework.a \
+            libonnxruntime_graph.a \
+            libonnxruntime_mlas.a \
+            libonnxruntime_optimizer.a \
+            libonnxruntime_providers.a \
+            libonnxruntime_session.a \
+            libonnxruntime_util.a; do
+            test -e "$ort_link_profile/$required"
+          done
+
+          test -d "$ort_build_profile/_deps"
+          rm -rf "$ort_link_root/_deps"
+          mkdir -p "$ort_link_root/_deps"
+          dependency_count=0
+          while IFS= read -r archive; do
+            relative_archive="${archive#"$ort_build_profile/_deps/"}"
+            dependency_dir="$(dirname "$relative_archive")"
+            dependency_name="$(basename "$relative_archive")"
+            if [[ "$(basename "$dependency_dir")" == 'RelWithDebInfo' ]]; then
+              staged_relative="$relative_archive"
+            else
+              staged_relative="$dependency_dir/RelWithDebInfo/$dependency_name"
+            fi
+            staged_archive="$ort_link_root/_deps/$staged_relative"
+            mkdir -p "$(dirname "$staged_archive")"
+            ln -sfn "$archive" "$staged_archive"
+            dependency_count=$((dependency_count + 1))
+          done < <(find "$ort_build_profile/_deps" -type f -name '*.a' -print)
+          test "$dependency_count" -gt 0
+          test -e "$ort_link_root/_deps/onnx-build/RelWithDebInfo/libonnx.a"
+          test -e "$ort_link_root/_deps/onnx-build/RelWithDebInfo/libonnx_proto.a"
+          test -e "$ort_link_root/_deps/protobuf-build/RelWithDebInfo/libprotobuf-lite.a" || \
+            test -e "$ort_link_root/_deps/protobuf-build/RelWithDebInfo/libprotobuf.a"
+
+          echo "VERENU_INTEL_ORT_LIB_PATH=$ort_link_root" >> "$GITHUB_ENV"
+          echo 'VERENU_INTEL_ORT_LIB_PROFILE=RelWithDebInfo' >> "$GITHUB_ENV"
 
       - name: Import macOS signing certificate
         if: matrix.os-name == 'macos'
@@ -128,7 +230,9 @@ jobs:
             mv "$apple_dmg" "$apple_release_dmg"
             verify_macos_dmg "$apple_release_dmg"
 
-            npm run tauri build -- --target x86_64-apple-darwin
+            ORT_LIB_PATH="$VERENU_INTEL_ORT_LIB_PATH" \
+            ORT_LIB_PROFILE="$VERENU_INTEL_ORT_LIB_PROFILE" \
+              npm run tauri build -- --target x86_64-apple-darwin
             mv "$intel_dmg" "$intel_release_dmg"
             verify_macos_dmg "$intel_release_dmg"
           else

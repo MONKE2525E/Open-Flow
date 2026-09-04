@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { appStore } from './lib/stores';
   import { cleanupPromptEditor } from './lib/stores.svelte';
-  import { isWindows } from './lib/platform';
+  import { isMac, isWindows } from './lib/platform';
   import Sidebar from './lib/components/layout/Sidebar.svelte';
   import Home from './lib/views/Home.svelte';
   import Insights from './lib/views/Insights.svelte';
@@ -12,6 +12,8 @@
   import Style from './lib/views/Style.svelte';
   import Settings from './lib/views/Settings.svelte';
   import CleanupPromptModal from './lib/components/settings/CleanupPromptModal.svelte';
+  import SyncPairModal from './lib/components/settings/SyncPairModal.svelte';
+  import { startSyncListeners, syncStore } from './lib/syncStore.svelte';
   import DictationPill from './lib/components/layout/DictationPill.svelte';
   import Setup from './lib/views/Setup.svelte';
   import { getVersion, invoke, isTauriRuntime, listen } from './lib/tauri';
@@ -27,6 +29,7 @@
   import { fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { MOTION_MS, MOTION_PX, NAV_ORDER, SETTINGS_SECTION_ORDER, directionFromOrder, motionMs, motionPx, pageSwap, reducedMotionEnabled } from './lib/motion';
+  import { applyAccentTheme, normalizeAccentColor } from './lib/accentTheme';
 
   type EffectiveTheme = 'light' | 'dark';
   type NativeTitleBarMetrics = { height: number; leftInset: number; rightInset: number; scaleFactor: number };
@@ -57,6 +60,11 @@
   $effect(() => {
     appStore.appearanceMode;
     if (typeof document !== 'undefined') applyTheme();
+  });
+
+  $effect(() => {
+    const accentColor = appStore.accentColor;
+    if (typeof document !== 'undefined') applyAccentTheme(document.documentElement, accentColor);
   });
 
   // Error toast
@@ -150,6 +158,7 @@
     let mounted = true;
     let cleanupFn: (() => void) | undefined;
     let stopNotificationClickListener: (() => void) | undefined;
+    let stopConnectivityRecheckListener: (() => void) | undefined;
     let stopSettingsImportedListener: (() => void) | undefined;
     let stopAutomaticUpdateChecks: (() => void) | undefined;
     let stopLocalSttListeners: (() => void) | undefined;
@@ -157,6 +166,7 @@
     let stopDownloadManagerListeners: (() => void) | undefined;
     let stopProviderStatusChecks: (() => void) | undefined;
     let stopApiHealthChecks: (() => void) | undefined;
+    let stopSyncListeners: (() => void) | undefined;
     let stopTitleBarMetricsListener: (() => void) | undefined;
 
     if (isWindows && isTauriRuntime()) {
@@ -173,21 +183,25 @@
     // stores disagreeing with what import_data actually wrote to disk.
     async function reloadGlobalSettings() {
       try {
-        const [done, appearance, forceSetupOnLaunch, cleanupEnabled, betaUpdatesEnabled, legacyFeaturesEnabled] = await Promise.all([
+        const [done, appearance, accentColor, forceSetupOnLaunch, cleanupEnabled, betaUpdatesEnabled, legacyFeaturesEnabled, syncEnabled] = await Promise.all([
           invoke<boolean | null>('get_setting', { key: 'setup_complete' }),
           invoke<'system' | 'light' | 'dark' | null>('get_setting', { key: 'appearance_mode' }),
+          invoke<string | null>('get_setting', { key: 'accent_color' }),
           invoke<boolean | null>('get_setting', { key: 'force_setup_on_launch' }),
           invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
           invoke<boolean | null>('get_setting', { key: 'beta_updates_enabled' }),
           invoke<boolean | null>('get_setting', { key: 'legacy_features_enabled' }),
+          invoke<boolean | null>('get_setting', { key: 'sync_enabled' }),
         ]);
         appStore.setupComplete = forceSetupOnLaunch ? false : done === true;
         if (appearance === 'light' || appearance === 'dark' || appearance === 'system') {
           appStore.appearanceMode = appearance;
         }
+        appStore.accentColor = normalizeAccentColor(accentColor);
         appStore.cleanupEnabled = cleanupEnabled ?? true;
         appStore.betaUpdatesEnabled = betaUpdatesEnabled ?? false;
         appStore.legacyFeaturesEnabled = legacyFeaturesEnabled ?? false;
+        appStore.syncEnabled = syncEnabled ?? false;
       } catch {
         appStore.setupComplete = false;
       }
@@ -195,6 +209,11 @@
 
     (async () => {
       await reloadGlobalSettings();
+      if (!mounted) return;
+      if (appStore.syncEnabled) {
+        try { stopSyncListeners = startSyncListeners(); }
+        catch (error) { console.error('Failed to start sync listeners:', error); }
+      }
 
       const unlisten = await listen<string>('verenu:error', (ev) => {
         const raw = ev.payload ?? '';
@@ -230,6 +249,20 @@
         stopNotificationClickListener = unlisten;
       })
       .catch((error) => { console.warn('Failed to listen for notification clicks:', error); });
+
+    // The backend fires this after a transcription request fails with a
+    // connection error and it has actively confirmed the connection is down —
+    // re-ping immediately so the persistent offline toast shows up now instead
+    // of on the next 60s interval.
+    listen('verenu:recheck-connectivity', () => void pingConnectivity())
+      .then((unlisten) => {
+        if (!mounted) {
+          unlisten();
+          return;
+        }
+        stopConnectivityRecheckListener = unlisten;
+      })
+      .catch((error) => { console.warn('Failed to listen for connectivity rechecks:', error); });
 
     // Synchronous: startAutomaticUpdateChecks fires its first check in the
     // background and returns the cleanup immediately, so there's no unmount
@@ -280,6 +313,7 @@
       mounted = false;
       if (cleanupFn) cleanupFn();
       if (stopNotificationClickListener) stopNotificationClickListener();
+      if (stopConnectivityRecheckListener) stopConnectivityRecheckListener();
       if (stopSettingsImportedListener) stopSettingsImportedListener();
       if (stopAutomaticUpdateChecks) stopAutomaticUpdateChecks();
       if (stopLocalSttListeners) stopLocalSttListeners();
@@ -287,6 +321,7 @@
       if (stopDownloadManagerListeners) stopDownloadManagerListeners();
       if (stopProviderStatusChecks) stopProviderStatusChecks();
       if (stopApiHealthChecks) stopApiHealthChecks();
+      if (stopSyncListeners) stopSyncListeners();
       if (stopTitleBarMetricsListener) stopTitleBarMetricsListener();
       media?.removeEventListener?.('change', onSystemThemeChange);
       clearInterval(connectivityTimer);
@@ -295,7 +330,7 @@
   });
 </script>
 
-<div class="app" class:app-windows={isWindows}>
+<div class="app" class:app-mac={isMac} class:app-windows={isWindows}>
   {#if appStore.setupComplete === false}
     <Setup />
   {/if}
@@ -337,6 +372,9 @@
   {#if cleanupPromptEditor.open}
     <CleanupPromptModal />
   {/if}
+  {#if syncStore.status?.pairing?.kind === 'incoming' && syncStore.status.pairing.phase !== 'failed'}
+    <SyncPairModal />
+  {/if}
   <DictationPill />
 
   {#if errorToast}
@@ -369,6 +407,7 @@
   :global(html, body) {
     margin: 0;
     padding: 0;
+    overflow: hidden;
   }
 
   :global(body) {

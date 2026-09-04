@@ -33,8 +33,8 @@ function tauriMock({ appVersion } = {}) {
     transcription_default_model: 'groq/whisper-large-v3-turbo',
     transcription_models_by_provider: {
       groq: ['whisper-large-v3-turbo', 'whisper-large-v3'],
-      openai: ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe'],
-      google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
+      openai: ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe', 'whisper-1'],
+      google: ['gemini-2.5-flash', 'gemini-3.5-transcribe', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'],
       local: ['parakeet-v3'],
     },
     transcription_fallback_models: [],
@@ -43,9 +43,9 @@ function tauriMock({ appVersion } = {}) {
     cleanup_model:           'groq/qwen/qwen3.6-27b',
     cleanup_default_model:   'groq/qwen/qwen3.6-27b',
     cleanup_models_by_provider: {
-      groq: ['qwen/qwen3.6-27b', 'openai/gpt-oss-20b'],
+      groq: ['qwen/qwen3.6-27b', 'openai/gpt-oss-20b', 'openai/gpt-oss-120b'],
       openai: ['gpt-4o-mini', 'gpt-4o'],
-      google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
+      google: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'],
       local: [],
     },
     cleanup_fallback_models: [],
@@ -65,6 +65,7 @@ function tauriMock({ appVersion } = {}) {
     mic_gain:                3.5,
     microphone_device:       '',
     appearance_mode:         'system',
+    accent_color:            null,
     clipboard_phrase:        null,
     clipboard_phrase_enabled: false,
     legacy_features_enabled: false,
@@ -162,6 +163,7 @@ function tauriMock({ appVersion } = {}) {
         microphone_device:             mem.microphone_device ?? null,
         hotkey:                        mem.hotkey ?? null,
         appearance_mode:               mem.appearance_mode ?? null,
+        accent_color:                  mem.accent_color ?? null,
         clipboard_phrase:              mem.clipboard_phrase ?? null,
         clipboard_phrase_enabled:      mem.clipboard_phrase_enabled ?? null,
         legacy_features_enabled:       mem.legacy_features_enabled ?? null,
@@ -507,6 +509,24 @@ function tauriMock({ appVersion } = {}) {
       case 'get_stats':          return { total_words: 315, avg_wpm: 152, day_streak: 6 };
       case 'count_old_transcriptions':
         return args?.retention === 'Forever' ? 0 : 3;
+      // Contexts live in the sidebar rail now, so the mock has to supply a
+      // list for those rows to exist at all.
+      case 'get_contexts':       return [
+        { id: 1, name: 'Everywhere', is_everywhere: true,  icon: null,   tone: null, cleanup_intensity: null, color: null, custom_instructions: null, pinned_at: null,                  created_at: '2026-05-01 10:00:00', updated_at: '2026-05-01 10:00:00' },
+        { id: 2, name: 'Work',       is_everywhere: false, icon: 'chart', tone: null, cleanup_intensity: null, color: null, custom_instructions: null, pinned_at: '2026-05-16 10:00:00', created_at: '2026-05-02 10:00:00', updated_at: '2026-05-02 10:00:00' },
+        { id: 3, name: 'Writing',    is_everywhere: false, icon: 'pencil', tone: null, cleanup_intensity: null, color: null, custom_instructions: null, pinned_at: null,                 created_at: '2026-05-03 10:00:00', updated_at: '2026-05-03 10:00:00' },
+      ];
+      case 'get_context_targets': return [
+        { id: 1, context_id: 2, executable: 'code.exe', created_at: '2026-05-02 10:00:00' },
+      ];
+      case 'get_context_websites': return [
+        { id: 1, context_id: 2, domain: 'github.com', created_at: '2026-05-02 10:00:00' },
+      ];
+      case 'get_context_dictionary':
+      case 'get_context_snippets': return [];
+      case 'get_context_stats':  return { dictations: 0, words: 0, last_used_at: null };
+      case 'get_app_icon':
+      case 'get_site_icon':      return null;
       case 'get_dictionary':     return [];
       case 'get_snippets':       return [];
       case 'get_memory_mb':      return 75;   // number required — tweened(0) crashes on null

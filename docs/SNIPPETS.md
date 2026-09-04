@@ -1,44 +1,66 @@
 # Snippets
 
-> **Legacy page.** The standalone Snippets page is hidden by default — snippets can be managed per context group from the [Contexts](CONTEXTS.md) page's Snippets tab. Turn on **Settings → General → Legacy pages** to bring this page back if you prefer managing snippets separately.
+Snippets turn a short spoken trigger into saved text. They are useful for email addresses, signatures, boilerplate replies, code fragments, and other text you use often.
 
-Snippets let you say a short trigger phrase and have Verenu expand it into something longer — a signature, a boilerplate response, a piece of code, anything you type often.
+Snippets belong to a context. Add them to **Everywhere** for a trigger you want available across Verenu, or add them to a specific context for app- or website-specific text.
 
-## Creating a snippet
+## Create a snippet
 
-Each snippet has:
+1. Open **Contexts** and select the context where the snippet belongs.
+2. Open the **Snippets** tab.
+3. Choose **+ Snippet**.
+4. Enter one or more **Trigger** phrases. Separate aliases with commas.
+5. Enter the **Expansion** that Verenu should insert.
+6. Optionally add **Cleanup instructions** for the expansion.
+7. Save the snippet.
 
-- **Trigger** — the phrase you say to activate it. You can list multiple aliases separated by commas (e.g. "Gemini Goal, Gemini Gold") so close transcriptions of the same phrase all work.
-- **Expansion** — the text that gets inserted in place of the trigger.
-- **Instructions** *(optional)* — extra formatting guidance for how the expansion should be applied.
+Triggers can be up to 300 characters. Expansion and instruction text can contain multiple lines.
 
-## How snippets fire
+For example:
 
-There are two ways a snippet can trigger, depending on what you say:
+| Field | Example |
+| --- | --- |
+| Trigger | `my email, email address` |
+| Expansion | `hello@example.com` |
+| Cleanup instructions | `Do not add a period after this address.` |
 
-1. **Whole-dictation match (fast path)** — If your entire dictation is just the trigger phrase, Verenu swaps it directly for the expansion and skips the cleanup step entirely. This is instant.
-2. **Trigger within a longer dictation** — If the trigger appears as part of something longer you said, Verenu passes its instructions to the cleanup step, so the expansion is woven into your sentence naturally rather than dropped in verbatim.
+You can dictate into the Trigger and Expansion fields with the microphone buttons.
 
-## Formatting instructions
+## How a snippet fires
 
-You can add plain-language formatting rules in the Instructions field, and Verenu enforces some of these mechanically after cleanup so they always apply:
+Verenu has two snippet paths:
 
-- **"all caps"** — the result is converted to uppercase.
-- **"no period"** — any trailing period is stripped from the result.
-- **"end with exclamation"** — the result ends with `!`.
+1. **The whole dictation is the trigger.** Verenu expands it directly and skips the cleanup model. This keeps a simple trigger fast and avoids a punctuation mark being added to the expansion.
+2. **The trigger appears inside a longer dictation.** Verenu passes the matched snippet's instructions into cleanup, then expands the trigger in the resulting text. This lets the expansion fit naturally into the sentence.
 
-You can also negate these (e.g. "don't use all caps") if a snippet's expansion would otherwise conflict with your tone settings.
+Matching is case-insensitive and accepts punctuation that transcription may add around the trigger. Triggers must still be standalone phrases. A trigger such as `test` does not match inside `testing` or `pre-test`.
 
-## Next step
+If multiple aliases or snippets match, Verenu prefers the longest matching trigger and ignores overlapping matches.
 
-See [Dictionary](DICTIONARY.md) for vocabulary corrections, or [App Mappings & Profiles](APP_MAPPINGS.md) for per-app tone and cleanup settings.
+## Cleanup instructions
 
-## Related Docs
+Instructions are optional. They are added to the cleanup model's prompt only when the snippet is detected. Verenu also enforces a few narrow formatting rules after cleanup when it can identify them, including:
+
+- all caps
+- no final period
+- ending with an exclamation mark
+
+Write instructions as a direct request. For example, `Do not add a period after this phrase.`
+
+Use the context's **Custom instructions** when a rule applies to everything you dictate in that context. Use snippet instructions when the rule belongs only to one expansion.
+
+## Reuse and move snippets
+
+A snippet can belong to more than one context. Add the existing snippet to another context when you want to reuse it. From a snippet row menu, choose **Move to...** to remove it from the current context and assign it elsewhere.
+
+Deleting a snippet removes it from every context. Deleting a context moves its snippets to Everywhere instead.
+
+The Snippets list shows the usage count and the date the snippet was created. Search matches both triggers and expansions.
+
+## Related docs
 
 <p align="center">
   <a href="CONTEXTS.md"><img alt="Contexts" src="https://img.shields.io/badge/Contexts-Guide-a3352b"></a>
-  <a href="DICTIONARY.md"><img alt="Dictionary" src="https://img.shields.io/badge/Dictionary-Guide-5b554a"></a>
-  <a href="APP_MAPPINGS.md"><img alt="App Mappings" src="https://img.shields.io/badge/App-Mappings-c44632"></a>
+  <a href="VOCABULARY.md"><img alt="Vocabulary" src="https://img.shields.io/badge/Vocabulary-Guide-c44632"></a>
   <a href="CLEANUP_LEVELS.md"><img alt="Cleanup Levels" src="https://img.shields.io/badge/Cleanup-Levels-7e7266"></a>
-  <a href="README.md"><img alt="Docs Index" src="https://img.shields.io/badge/Docs-Index-2b2422"></a>
 </p>

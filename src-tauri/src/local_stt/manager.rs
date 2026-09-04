@@ -322,16 +322,12 @@ impl LocalTranscriptionManager {
             .ok_or_else(|| anyhow::anyhow!("unknown local model: {model_id}"))?;
         let root = self.prepare_models_dir()?;
         self.cancel_download(Some(model_id))?;
-        let completion = self
-            .download_task
-            .lock()
-            .ok()
-            .and_then(|guard| {
-                guard
-                    .as_ref()
-                    .filter(|task| task.model_id == model_id)
-                    .map(|task| Arc::clone(&task.completion))
-            });
+        let completion = self.download_task.lock().ok().and_then(|guard| {
+            guard
+                .as_ref()
+                .filter(|task| task.model_id == model_id)
+                .map(|task| Arc::clone(&task.completion))
+        });
         if let Some(completion) = completion {
             loop {
                 let notified = completion.notified();

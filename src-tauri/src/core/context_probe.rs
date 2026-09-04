@@ -26,8 +26,6 @@ pub enum ContextProbeSource {
     PermissionMissing,
     UnsupportedControl,
     Unavailable,
-    HistoryFallback,
-    ClipboardSniff,
 }
 
 impl ContextProbeSource {
@@ -39,37 +37,7 @@ impl ContextProbeSource {
             ContextProbeSource::PermissionMissing => "permission_missing",
             ContextProbeSource::UnsupportedControl => "unsupported_control",
             ContextProbeSource::Unavailable => "unavailable",
-            ContextProbeSource::HistoryFallback => "history_fallback",
-            ContextProbeSource::ClipboardSniff => "clipboard_sniff",
         }
-    }
-
-    pub fn allows_history_fallback(self) -> bool {
-        matches!(
-            self,
-            ContextProbeSource::PermissionMissing
-                | ContextProbeSource::Unavailable
-                | ContextProbeSource::UnsupportedControl
-        )
-    }
-
-    pub fn supports_contextual_casing(self) -> bool {
-        matches!(
-            self,
-            ContextProbeSource::CaretLocal
-                | ContextProbeSource::EmptyField
-                | ContextProbeSource::HistoryFallback
-                | ContextProbeSource::ClipboardSniff
-        )
-    }
-
-    pub fn supports_auto_spacing(self) -> bool {
-        matches!(
-            self,
-            ContextProbeSource::CaretLocal
-                | ContextProbeSource::HistoryFallback
-                | ContextProbeSource::ClipboardSniff
-        )
     }
 }
 
@@ -78,9 +46,18 @@ pub struct InjectionContextProbe {
     pub context: SentenceContext,
     pub source: ContextProbeSource,
     pub context_tail: String,
+    /// Text immediately after the caret, or after the end of a selection.
+    pub context_head: String,
+    /// Whether an empty or non-empty left edge was confirmed by the platform.
+    pub left_reliable: bool,
+    /// Whether an empty or non-empty right edge was confirmed by the platform.
+    pub right_reliable: bool,
     pub selection_state: SelectionState,
     pub control_identity_hash: String,
     pub control_type: String,
+    /// Owning process id for validating that the probe still belongs to the
+    /// window captured when dictation started.
+    pub target_id: usize,
 }
 
 impl InjectionContextProbe {
@@ -89,9 +66,13 @@ impl InjectionContextProbe {
             context: SentenceContext::Unknown,
             source,
             context_tail: String::new(),
+            context_head: String::new(),
+            left_reliable: false,
+            right_reliable: false,
             selection_state: SelectionState::Unknown,
             control_identity_hash: source.as_str().to_string(),
             control_type: control_type.into(),
+            target_id: 0,
         }
     }
 }
@@ -138,7 +119,7 @@ pub(crate) fn describe_selection_state(range_seen: bool, range_collapsed: bool) 
 }
 
 #[cfg(target_os = "macos")]
-const MACOS_PROBE_TIMEOUT_MS: u64 = 45;
+const MACOS_PROBE_TIMEOUT_MS: u64 = 120;
 
 #[cfg(target_os = "macos")]
 static BASE_INSTANT: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
@@ -146,7 +127,11 @@ static BASE_INSTANT: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLo
 #[cfg(target_os = "macos")]
 fn get_monotonic_ms() -> u64 {
     let base = *BASE_INSTANT.get_or_init(std::time::Instant::now);
-    std::time::Instant::now().duration_since(base).as_millis() as u64
+    (std::time::Instant::now()
+        .duration_since(base)
+        .as_millis()
+        .min(u64::MAX as u128) as u64)
+        .saturating_add(1)
 }
 
 #[cfg(target_os = "macos")]
@@ -256,40 +241,6 @@ pub async fn read_injection_context_probe() -> InjectionContextProbe {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn history_fallback_blocked_only_for_ambiguous_selection() {
-        assert!(ContextProbeSource::PermissionMissing.allows_history_fallback());
-        assert!(ContextProbeSource::Unavailable.allows_history_fallback());
-        assert!(ContextProbeSource::UnsupportedControl.allows_history_fallback());
-        assert!(!ContextProbeSource::AmbiguousSelection.allows_history_fallback());
-        assert!(!ContextProbeSource::CaretLocal.allows_history_fallback());
-    }
-
-    #[test]
-    fn only_localish_sources_allow_contextual_casing() {
-        assert!(ContextProbeSource::CaretLocal.supports_contextual_casing());
-        assert!(ContextProbeSource::EmptyField.supports_contextual_casing());
-        assert!(ContextProbeSource::HistoryFallback.supports_contextual_casing());
-        assert!(ContextProbeSource::ClipboardSniff.supports_contextual_casing());
-        assert!(!ContextProbeSource::PermissionMissing.supports_contextual_casing());
-        assert!(!ContextProbeSource::AmbiguousSelection.supports_contextual_casing());
-    }
-
-    #[test]
-    fn auto_spacing_allowed_for_caret_local_and_history_fallback() {
-        assert!(ContextProbeSource::CaretLocal.supports_auto_spacing());
-        assert!(ContextProbeSource::HistoryFallback.supports_auto_spacing());
-        assert!(ContextProbeSource::ClipboardSniff.supports_auto_spacing());
-        assert!(!ContextProbeSource::EmptyField.supports_auto_spacing());
-        assert!(!ContextProbeSource::UnsupportedControl.supports_auto_spacing());
-        assert!(!ContextProbeSource::AmbiguousSelection.supports_auto_spacing());
-    }
-
-    #[test]
-    fn clipboard_sniff_does_not_allow_further_fallback() {
-        assert!(!ContextProbeSource::ClipboardSniff.allows_history_fallback());
-    }
 
     #[test]
     fn empty_field_resolves_to_new_sentence() {

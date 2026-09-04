@@ -27,7 +27,10 @@ export const PRICING: Record<string, Rate> = {
   'llama-3.3-70b-versatile': { kind: 'token', usd_per_m_in: 0.59, usd_per_m_out: 0.79 },
   'qwen3.6-27b': { kind: 'token', usd_per_m_in: 0.60, usd_per_m_out: 3.00 },
   'gpt-4o-mini': { kind: 'token', usd_per_m_in: 0.15, usd_per_m_out: 0.6 },
-  'gemini-3.5-flash': { kind: 'token', usd_per_m_in: 0.3, usd_per_m_out: 2.5 },
+  'gemini-3.5-flash': { kind: 'token', usd_per_m_in: 2.70, usd_per_m_out: 16.20 },
+  'gemini-3.5-flash-lite': { kind: 'token', usd_per_m_in: 0.30, usd_per_m_out: 2.50 },
+  'gemini-2.5-flash': { kind: 'token', usd_per_m_in: 0.15, usd_per_m_out: 1.25 },
+  'gemini-2.5-flash-lite': { kind: 'token', usd_per_m_in: 0.10, usd_per_m_out: 0.40 },
 };
 
 /*
@@ -36,7 +39,7 @@ export const PRICING: Record<string, Rate> = {
  * this task-scoped override kicks in instead. Keyed as "model#task".
  */
 const TASK_OVERRIDES: Record<string, Rate> = {
-  'gemini-3.5-flash#transcription': { kind: 'audio', usd_per_hour: 1.0 },
+  'gemini-3.5-transcribe#transcription': { kind: 'audio', usd_per_hour: 0.306 },
 };
 
 /** Rough tokenizer stand-in. Good to ~±15% for English prose, which is all an estimate needs. */

@@ -85,11 +85,101 @@ impl FrameDenoiser {
     }
 }
 
+/// Short-window amplitude envelope for the recording visualizer.
+///
+/// The pill used to be driven by the single per-buffer RMS value alone, and one
+/// scalar every 50ms is fundamentally not enough to show audio *flowing*: RMS
+/// over a 50ms window exists precisely to average away everything that happens
+/// inside that window, so a sustained vowel produces a near-constant stream of
+/// identical numbers. The visualizer can carry that value outward across its
+/// bars all it likes -- with every bar holding the same number, the motion is
+/// invisible.
+///
+/// So the audio thread also keeps a compact envelope: the PEAK of each
+/// ENVELOPE_WINDOW_MS slice. Peak rather than RMS because it preserves
+/// transients and micro-variation instead of smoothing them away, and at 10ms a
+/// voiced vowel carries real pitch-period and vibrato structure (a 100Hz voice
+/// is one glottal pulse per window). That is what makes a held vowel visibly
+/// flow while its average level barely moves.
+///
+/// This is ~100 f32/sec, drained and shipped in small batches -- not PCM.
+pub const ENVELOPE_WINDOW_MS: u32 = 10;
+const ENVELOPE_QUEUE_CAP: usize = 512; // ~5s of slack; the reader drains 20x/sec
+
+pub struct EnvelopeTap {
+    queue: ArrayQueue<f32>,
+    peak: AtomicU32,
+    count: AtomicU32,
+    window_samples: AtomicU32,
+}
+
+impl EnvelopeTap {
+    fn new() -> Self {
+        Self {
+            queue: ArrayQueue::new(ENVELOPE_QUEUE_CAP),
+            peak: AtomicU32::new(0f32.to_bits()),
+            count: AtomicU32::new(0),
+            // Zero until the device's real rate is known; push_sample is inert
+            // until then rather than guessing a rate.
+            window_samples: AtomicU32::new(0),
+        }
+    }
+
+    fn set_sample_rate(&self, sample_rate: u32) {
+        let w = ((sample_rate * ENVELOPE_WINDOW_MS) / 1000).max(1);
+        self.window_samples.store(w, Ordering::Relaxed);
+    }
+
+    /// Called once per mono frame on the audio callback thread. Only that
+    /// thread touches the accumulator, so Relaxed ordering is sufficient and
+    /// there is no lock on the realtime path.
+    #[inline]
+    fn push_sample(&self, mono: f32, display_gain: f32) {
+        let window = self.window_samples.load(Ordering::Relaxed);
+        if window == 0 {
+            return;
+        }
+        let amplitude = (mono.abs() * display_gain).min(1.0);
+        if amplitude > f32::from_bits(self.peak.load(Ordering::Relaxed)) {
+            self.peak.store(amplitude.to_bits(), Ordering::Relaxed);
+        }
+        if self.count.fetch_add(1, Ordering::Relaxed) + 1 >= window {
+            let peak = f32::from_bits(self.peak.load(Ordering::Relaxed));
+            self.peak.store(0f32.to_bits(), Ordering::Relaxed);
+            self.count.store(0, Ordering::Relaxed);
+            // Overwrite oldest rather than block, matching the sample queue's
+            // policy -- a stalled reader must never stall audio capture.
+            if self.queue.push(peak).is_err() {
+                let _ = self.queue.pop();
+                let _ = self.queue.push(peak);
+            }
+        }
+    }
+
+    /// Drains everything captured since the last call, oldest first.
+    pub fn drain(&self) -> Vec<f32> {
+        let mut out = Vec::with_capacity(8);
+        while let Some(v) = self.queue.pop() {
+            out.push(v);
+        }
+        out
+    }
+}
+
+/// Optional crash-recovery sink for a dictation. The audio worker pushes
+/// gain-adjusted (and optionally denoised) native-rate samples here; the
+/// implementation must not run on the CPAL callback thread.
+pub trait DurableSink: Send {
+    fn extend(&mut self, native_samples: &[f32], native_rate: u32);
+    fn finish(&mut self);
+}
+
 pub struct RecordingSession {
     stop_tx: mpsc::SyncSender<()>,
     result_rx: mpsc::Receiver<Result<RecordingResult>>,
     pub level: Arc<AtomicU32>,
     pub raw_level: Arc<AtomicU32>,
+    pub envelope: Arc<EnvelopeTap>,
     pub active: Arc<AtomicBool>,
 }
 
@@ -104,7 +194,12 @@ pub struct RecordingResult {
 }
 
 impl RecordingSession {
-    pub fn start(device_name: Option<String>, noise_reduction: bool, gain: f32) -> Result<Self> {
+    pub fn start(
+        device_name: Option<String>,
+        noise_reduction: bool,
+        gain: f32,
+        durable: Option<Box<dyn DurableSink>>,
+    ) -> Result<Self> {
         let host = cpal::default_host();
         let device = if let Some(name) = device_name {
             host.input_devices()?
@@ -128,12 +223,19 @@ impl RecordingSession {
 
         let level = Arc::new(AtomicU32::new(0f32.to_bits()));
         let raw_level = Arc::new(AtomicU32::new(0f32.to_bits()));
+        let envelope = Arc::new(EnvelopeTap::new());
         let active = Arc::new(AtomicBool::new(true));
         let display_gain = (DISPLAY_GAIN * gain).max(0.0);
 
         let level_w = Arc::clone(&level);
         let raw_level_w = Arc::clone(&raw_level);
+        let envelope_w = Arc::clone(&envelope);
         let active_w = Arc::clone(&active);
+        envelope_w.set_sample_rate(sample_rate);
+        // `processed` already contains the configured microphone gain. Keep
+        // the remaining display multiplier explicit so the envelope and the
+        // scalar level use the same effective gain without applying it twice.
+        let processed_display_gain = if gain > 0.0 { display_gain / gain } else { 0.0 };
 
         std::thread::spawn(move || {
             let queue = Arc::new(ArrayQueue::<f32>::new(AUDIO_QUEUE_CAPACITY_SAMPLES));
@@ -142,7 +244,9 @@ impl RecordingSession {
 
             let worker_queue = Arc::clone(&queue);
             let worker_stop = Arc::clone(&stop_processing);
+            let worker_envelope = Arc::clone(&envelope_w);
             let worker = std::thread::spawn(move || {
+                let mut durable = durable;
                 let mut processed = Vec::<f32>::new();
                 let mut batch = Vec::<f32>::with_capacity(2048);
                 let mut raw_sum_sq = 0.0f64;
@@ -165,8 +269,8 @@ impl RecordingSession {
                     }
 
                     if !batch.is_empty() && !recording_truncated {
+                        let before_len = processed.len();
                         if let Some(d) = denoiser.as_mut() {
-                            let before_len = processed.len();
                             d.push(&batch, &mut processed);
                             if processed.len() > max_processed_samples {
                                 processed.truncate(max_processed_samples);
@@ -182,6 +286,17 @@ impl RecordingSession {
                                 &mut recording_truncated,
                             );
                         }
+                        // Drive the pill from the same gain-adjusted, optionally
+                        // denoised samples that continue into transcription.
+                        // Tapping the device callback here made the visualizer
+                        // learn fans and HVAC as foreground signal even when the
+                        // existing audio processor removed them successfully.
+                        for &sample in &processed[before_len..] {
+                            worker_envelope.push_sample(sample, processed_display_gain);
+                        }
+                        if let Some(sink) = durable.as_mut() {
+                            sink.extend(&processed[before_len..], sample_rate);
+                        }
                     }
 
                     if worker_stop.load(Ordering::Relaxed) && worker_queue.is_empty() {
@@ -195,12 +310,21 @@ impl RecordingSession {
 
                 if let Some(d) = denoiser.as_mut() {
                     if !recording_truncated {
+                        let before_len = processed.len();
                         d.flush(&mut processed);
                         if processed.len() > max_processed_samples {
                             processed.truncate(max_processed_samples);
                             recording_truncated = true;
                         }
+                        if let Some(sink) = durable.as_mut() {
+                            if processed.len() > before_len {
+                                sink.extend(&processed[before_len..], sample_rate);
+                            }
+                        }
                     }
+                }
+                if let Some(mut sink) = durable.take() {
+                    sink.finish();
                 }
 
                 let raw_rms = if raw_sample_count == 0 {
@@ -313,16 +437,12 @@ impl RecordingSession {
             .recv()
             .context("recording thread exited before signalling ready")??;
 
-        // A working capture stream proves the macOS microphone permission is
-        // granted — latch it so status checks don't report a stale AV cache.
-        #[cfg(target_os = "macos")]
-        crate::system::mac_app::mark_microphone_verified();
-
         Ok(RecordingSession {
             stop_tx,
             result_rx,
             level,
             raw_level,
+            envelope,
             active,
         })
     }

@@ -7,12 +7,14 @@
   import { motionMs } from '../../motion';
   import { fmtDuration } from '../insights/helpers';
   import HistoryToolbar from './HistoryToolbar.svelte';
-  import { fmtDate, fmtTime, formatAppLabel, type Entry, type RenderItem } from './helpers';
+  import { fmtDate, fmtTime, formatAppLabel, localDayKey, type Entry, type RenderItem } from './helpers';
 
   export let recents: Entry[];
   export let failedEntry: { created_at: string } | null;
-  export let cancelledEntry: { created_at: string } | null;
+  export let cancelledEntry: { created_at: string; kind?: 'cancelled' | 'interrupted' } | null;
   export let loading: boolean;
+  export let historyError = '';
+  export let onRetryHistory: () => void = () => {};
   export let hasMoreHistory: boolean;
   export let loadingMore: boolean;
   export let retrying: boolean;
@@ -36,16 +38,31 @@
   $: filtersActive = search.trim().length > 0 || appFilter !== null;
   $: firstLabel = recents.length > 0 ? fmtDate(recents[0].created_at) : '';
 
-  function rowMeta(entry: Entry): string {
-    const parts: string[] = [];
-    if (entry.app_name) parts.push(formatAppLabel(entry.app_name));
+  function durationText(entry: Entry): string {
     if (
       typeof entry.duration_ms === 'number' &&
       Number.isFinite(entry.duration_ms) &&
       entry.duration_ms >= 0
     ) {
-      parts.push(fmtDuration(entry.duration_ms));
+      return fmtDuration(entry.duration_ms);
     }
+    return '';
+  }
+
+  const APP_LABEL_MAX_CHARS = 40;
+
+  function capAppLabel(appName: string): string {
+    const label = formatAppLabel(appName);
+    return label.length > APP_LABEL_MAX_CHARS
+      ? `${label.slice(0, APP_LABEL_MAX_CHARS - 1)}…`
+      : label;
+  }
+
+  function rowMeta(entry: Entry): string {
+    const parts: string[] = [];
+    if (entry.app_name) parts.push(formatAppLabel(entry.app_name));
+    const duration = durationText(entry);
+    if (duration) parts.push(duration);
     return parts.join(' · ');
   }
 
@@ -54,7 +71,10 @@
     const seenHeaders = new Set<string>();
     const dateCache = new Map<string, string>();
     flatItems = recents.reduce<RenderItem[]>((acc, entry) => {
-      const dayKey = entry.created_at.slice(0, 10);
+      // Group by the user's local calendar day. The database stores UTC
+      // timestamps, so the raw date prefix can split one local day into two
+      // separate headers around UTC midnight.
+      const dayKey = localDayKey(entry.created_at);
       let label = dateCache.get(dayKey);
       if (!label) {
         label = fmtDate(entry.created_at);
@@ -81,10 +101,38 @@
         delete cachedHeights[key];
       }
     }
+    for (const key of Object.keys(stackedMeta)) {
+      if (!keys.has(key)) {
+        delete stackedMeta[key];
+      }
+    }
   }
 
   const DEFAULT_HEADER_HEIGHT = 38;
   const DEFAULT_ROW_HEIGHT = 74;
+  let stackedMeta: Record<string, boolean> = {};
+
+  // Decide per row whether the left-column meta stack fits inside the row's
+  // existing height. Measured rather than compared against a tuned constant, so
+  // it stays correct when padding/font/spacing change. The left block is always
+  // in the DOM (absolutely positioned, invisible until hover) so it can be
+  // measured before we commit to a layout.
+  function measureStacked(node: HTMLElement, key: string) {
+    const metaEl = node.querySelector<HTMLElement>('.day-meta-left');
+    if (!metaEl) return;
+    // Skip while hovered: the below-variant grows the row on hover, which would
+    // otherwise flip the decision mid-interaction.
+    if (node.matches(':hover, :focus-within')) return;
+    // 1px slack: sub-pixel layout differences must not flip the decision.
+    const fits = metaEl.getBoundingClientRect().bottom <= node.getBoundingClientRect().bottom + 1;
+    if (stackedMeta[key] !== fits) {
+      stackedMeta = { ...stackedMeta, [key]: fits };
+    }
+  }
+
+  function isInteractiveRow(node: HTMLElement): boolean {
+    return node.matches(':hover, :focus-within');
+  }
 
   let container: HTMLElement | null = null;
   let listContainer: HTMLElement | null = null;
@@ -230,12 +278,23 @@
     for (const entry of entries) {
       const node = entry.target as HTMLElement;
       const key = nodeKeys.get(node);
-      if (key) {
-        const height = entry.borderBoxSize?.[0]?.blockSize ?? node.getBoundingClientRect().height;
+      // Hovering a short row reveals the below-text metadata and changes its
+      // height. Do not feed those transient hover dimensions back into the
+      // virtual list while the interaction is active; doing so causes the
+      // spacers to be recalculated on every frame of the old height transition.
+      if (key && !isInteractiveRow(node)) {
+        // Rounded: borderBoxSize and getBoundingClientRect can disagree by a
+        // fraction of a pixel, which would otherwise feed a "changed" height
+        // back into the layout every observer callback and never settle —
+        // the observer keeps re-measuring the row it just repositioned.
+        const height = Math.round(
+          entry.borderBoxSize?.[0]?.blockSize ?? node.getBoundingClientRect().height
+        );
         if (height > 0 && cachedHeights[key] !== height) {
           cachedHeights[key] = height;
           changed = true;
         }
+        measureStacked(node, key);
       }
     }
     if (changed) {
@@ -247,17 +306,21 @@
   function measureItem(node: HTMLElement, key: string) {
     nodeKeys.set(node, key);
     sharedObserver.observe(node);
+    measureStacked(node, key);
 
     return {
       update(newKey: string) {
         nodeKeys.delete(node);
         nodeKeys.set(node, newKey);
-        const height = node.getBoundingClientRect().height;
+        const height = Math.round(node.getBoundingClientRect().height);
         if (height > 0 && cachedHeights[newKey] !== height) {
-          cachedHeights[newKey] = height;
-          updateLayout();
-          updateVirtualList();
+          if (!isInteractiveRow(node)) {
+            cachedHeights[newKey] = height;
+            updateLayout();
+            updateVirtualList();
+          }
         }
+        measureStacked(node, newKey);
       },
       destroy() {
         sharedObserver.unobserve(node);
@@ -291,6 +354,13 @@
     <p class="empty-sub">Fetching your recent dictations.</p>
   </div>
 {:else}
+  {#if historyError}
+    <div class="empty-state" role="alert">
+      <p class="empty-h">History could not be loaded</p>
+      <p class="empty-sub">{historyError}</p>
+      <button class="btn-ghost btn-compact" onclick={onRetryHistory}>Retry</button>
+    </div>
+  {:else}
   {#if hasBanner}
     <div class="day-head day-head-row">
       <span>Today</span>
@@ -299,12 +369,23 @@
     <div class="day-table">
       {#if cancelledEntry}
         <div
-          class="day-row"
+          class="day-row banner-row"
           transition:fly={{ y: -10, duration: motionMs(400), easing: expoOut }}
         >
           <div class="day-time">{fmtTime(cancelledEntry.created_at)}</div>
-          <div class="day-text error-msg">You cancelled a recording — pick it back up?</div>
+          <div class="day-text error-msg">
+            {cancelledEntry.kind === 'interrupted'
+              ? 'A dictation was interrupted — pick it back up?'
+              : 'You cancelled a recording — pick it back up?'}
+          </div>
           <div class="row-actions">
+            <button
+              class="retry-btn"
+              onclick={onContinueCancelled}
+              disabled={resumingCancelled}
+            >
+              {resumingCancelled ? '…' : 'Continue'}
+            </button>
             <button
               class="dismiss-btn"
               onclick={onDismissCancelled}
@@ -316,19 +397,12 @@
                 <path d="M6 6l12 12M6 18 18 6"/>
               </svg>
             </button>
-            <button
-              class="retry-btn"
-              onclick={onContinueCancelled}
-              disabled={resumingCancelled}
-            >
-              {resumingCancelled ? '…' : 'Continue'}
-            </button>
           </div>
         </div>
       {/if}
       {#if failedEntry}
         <div
-          class="day-row"
+          class="day-row banner-row"
           transition:fly={{ y: -10, duration: motionMs(400), easing: expoOut }}
         >
           <div class="day-time">{fmtTime(failedEntry.created_at)}</div>
@@ -377,12 +451,27 @@
             {item.label}
           </div>
         {:else if item.type === 'row'}
-          <div use:measureItem={item.key} class="day-row" class:first-in-table={(index === 0 && !hasBanner) || flatItems[index - 1]?.type === 'header'}>
-            <div class="day-time">{fmtTime(item.entry.created_at)}</div>
+          <div use:measureItem={item.key} class="day-row" class:meta-stacked={stackedMeta[item.key]} class:first-in-table={(index === 0 && !hasBanner) || flatItems[index - 1]?.type === 'header'}>
+            <div class="day-time">
+              {fmtTime(item.entry.created_at)}
+              {#if rowMeta(item.entry)}
+                <div class="day-meta day-meta-left" aria-hidden={!stackedMeta[item.key]}>
+                  {#if item.entry.app_name}
+                    <div class="day-meta-app">{capAppLabel(item.entry.app_name)}</div>
+                  {/if}
+                  {#if durationText(item.entry)}
+                    <div class="day-meta-line">{durationText(item.entry)}</div>
+                  {/if}
+                </div>
+              {/if}
+            </div>
             <div class="day-main">
               <div class="day-text">{item.entry.clean_text}</div>
               {#if rowMeta(item.entry)}
-                <div class="day-meta">{rowMeta(item.entry)}</div>
+                <!-- Always in the DOM: removing it changed the row height, which
+                     flipped the measured stacked/below decision, which put it
+                     back — a self-feeding hover jitter loop. -->
+                <div class="day-meta day-meta-below" aria-hidden={!!stackedMeta[item.key]}>{rowMeta(item.entry)}</div>
               {/if}
             </div>
             <button
@@ -413,6 +502,7 @@
       </div>
     {/if}
   {/if}
+  {/if}
 {/if}
 
 <style>
@@ -423,9 +513,10 @@
   }
 
   .day-head {
-    font-family: var(--serif);
-    font-style: italic;
-    font-size: 14px;
+    font-family: var(--sans);
+    font-style: normal;
+    font-size: 13px;
+    font-weight: 500;
     color: var(--ink-soft);
     margin: 4px 4px 10px;
   }
@@ -437,16 +528,19 @@
 
   .day-row {
     display: grid;
-    grid-template-columns: 84px 1fr auto;
+    grid-template-columns: 84px 1fr 18px;
     align-items: start;
     padding: 11px 4px;
     border-bottom: 1px solid var(--line);
     gap: 14px;
     cursor: default;
+    box-sizing: border-box;
   }
   .day-row:hover { background: var(--control-hover); }
-  .day-row:not(:hover) .copy-btn:not(:focus-visible) { opacity: 0.25; }
-  .day-row:hover .copy-btn { opacity: 0.9; }
+
+  /* Banner rows put a wider action cluster (Retry, or Discard+Continue) in the
+     third column, which is normally sized just for the 18px copy-btn. */
+  .day-row.banner-row { grid-template-columns: 84px 1fr auto; }
 
   .copy-btn {
     all: unset;
@@ -458,14 +552,20 @@
     height: 18px;
     border-radius: 4px;
     color: var(--ink-mute);
-    opacity: 0.25;
-    transition: color 0.12s, opacity 0.12s;
+    opacity: 0;
+    transform: translateX(8px);
+    transition: opacity 0.16s var(--ui-ease-out, ease), transform 0.16s var(--ui-ease-out, ease), color 0.12s;
     flex-shrink: 0;
     margin-top: 2px;
   }
-  .copy-btn:hover { opacity: 0.9; }
-  .copy-btn:focus-visible {
+  .day-row:hover .copy-btn,
+  .copy-btn:focus-visible,
+  .copy-btn.copied {
     opacity: 0.9;
+    transform: translateX(0);
+  }
+  .copy-btn:hover { color: var(--ink-strong); }
+  .copy-btn:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
@@ -473,6 +573,7 @@
   .copy-btn svg { width: 10px; height: 10px; }
 
   .day-time {
+    position: relative;
     font-family: var(--mono);
     font-size: 11px;
     color: var(--ink-mute);
@@ -497,26 +598,76 @@
   }
 
   .day-meta {
+    /* Explicit: the left variant lives inside .day-time, which is mono/500 with
+       tabular numerals — without this it wouldn't match the underneath variant. */
+    font-family: var(--sans);
+    font-weight: 400;
+    font-variant-numeric: normal;
     font-size: 10.5px;
     color: var(--ink-faint);
     letter-spacing: 0.01em;
-    min-width: 0;
+    opacity: 0;
+  }
+
+  .day-meta-line {
+    max-width: 84px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    opacity: 0;
+  }
+
+  .day-meta-app {
+    max-width: 84px;
+    overflow-wrap: break-word;
+    line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Row is already tall enough (multi-line text) — stack in the left column,
+     no extra height ever needed, so it never shifts the page. */
+  .day-meta-left {
+    position: absolute;
+    top: 20px;
+    left: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    transform: translateX(-8px);
+    transition:
+      opacity var(--ui-duration-fast) var(--ui-ease-out),
+      transform var(--ui-duration-fast) var(--ui-ease-out);
+  }
+  .day-row.meta-stacked:hover .day-meta-left,
+  .day-row.meta-stacked:focus-within .day-meta-left {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  /* Row is short (one-line text) — no room on the left without growing the
+     row, so put it underneath instead; only this variant needs to grow. */
+  .day-meta-below {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     max-height: 0;
-    transform: translateY(-2px);
+    transform: translateX(-8px);
+    /* The virtual-list observer ignores this row while the interaction is
+       active, so the expansion can animate without feeding intermediate
+       heights back into the spacer calculation. */
     transition:
       opacity var(--ui-duration-fast) var(--ui-ease-out),
       transform var(--ui-duration-fast) var(--ui-ease-out),
       max-height var(--ui-duration-fast) var(--ui-ease-out);
   }
-  .day-row:hover .day-meta,
-  .day-row:focus-within .day-meta {
+  .day-row:not(.meta-stacked):hover .day-meta-below,
+  .day-row:not(.meta-stacked):focus-within .day-meta-below {
     opacity: 1;
     max-height: 16px;
-    transform: translateY(0);
+    transform: translateX(0);
   }
 
   .error-msg {
@@ -587,9 +738,9 @@
   }
 
   .empty-h {
-    font-family: var(--serif);
-    font-style: italic;
-    font-size: 17px;
+    font-family: var(--sans);
+    font-style: normal;
+    font-size: 15px;
     font-weight: 500;
     color: var(--ink-soft);
     margin: 0;

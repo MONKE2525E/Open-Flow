@@ -40,5 +40,5 @@
     width: 18px;
     height: 18px;
   }
-  .global-text { flex: 1; font-family: var(--serif); font-weight: 500; }
+  .global-text { flex: 1; font-family: var(--sans); font-weight: 500; }
 </style>

@@ -114,25 +114,76 @@ pub(super) fn classify_caret_char(ch: char) -> Option<SentenceContext> {
 }
 
 #[cfg(windows)]
-unsafe fn read_previous_context_text(
-    range: &windows::Win32::UI::Accessibility::IUIAutomationTextRange,
-) -> Option<String> {
-    use windows::Win32::UI::Accessibility::{TextPatternRangeEndpoint_Start, TextUnit_Character};
+struct ContextEdges {
+    left: String,
+    right: String,
+    left_reliable: bool,
+    right_reliable: bool,
+}
 
-    let caret = range.Clone().ok()?;
-    let moved = caret
+#[cfg(windows)]
+unsafe fn read_context_edges(
+    range: &windows::Win32::UI::Accessibility::IUIAutomationTextRange,
+    document_range: Option<&windows::Win32::UI::Accessibility::IUIAutomationTextRange>,
+) -> Option<ContextEdges> {
+    use windows::Win32::UI::Accessibility::{
+        TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start, TextUnit_Character,
+    };
+
+    let left = range.Clone().ok()?;
+    left.MoveEndpointByRange(
+        TextPatternRangeEndpoint_End,
+        range,
+        TextPatternRangeEndpoint_Start,
+    )
+    .ok()?;
+    let left_moved = left
         .MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, -64)
         .ok()?;
-    if moved == 0 {
-        return None;
-    }
+    let left_text = left.GetText(-1).ok()?.to_string();
 
-    let text = caret.GetText(-1).ok()?.to_string();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    let right = range.Clone().ok()?;
+    right
+        .MoveEndpointByRange(
+            TextPatternRangeEndpoint_Start,
+            range,
+            TextPatternRangeEndpoint_End,
+        )
+        .ok()?;
+    let right_moved = right
+        .MoveEndpointByUnit(TextPatternRangeEndpoint_End, TextUnit_Character, 64)
+        .ok()?;
+    let right_text = right.GetText(-1).ok()?.to_string();
+
+    let left_at_document_start = left_moved == 0
+        || document_range.is_some_and(|document| {
+            matches!(
+                range.CompareEndpoints(
+                    TextPatternRangeEndpoint_Start,
+                    document,
+                    TextPatternRangeEndpoint_Start,
+                ),
+                Ok(0)
+            )
+        });
+    let right_at_document_end = right_moved == 0
+        || document_range.is_some_and(|document| {
+            matches!(
+                range.CompareEndpoints(
+                    TextPatternRangeEndpoint_End,
+                    document,
+                    TextPatternRangeEndpoint_End,
+                ),
+                Ok(0)
+            )
+        });
+
+    Some(ContextEdges {
+        left_reliable: !left_text.is_empty() || left_at_document_start,
+        right_reliable: !right_text.is_empty() || right_at_document_end,
+        left: left_text,
+        right: right_text,
+    })
 }
 
 #[cfg(windows)]
@@ -154,7 +205,10 @@ unsafe fn range_is_collapsed(
 }
 
 #[cfg(test)]
-pub(super) fn resolve_injection_context(field_empty: bool, caret_context: Option<char>) -> SentenceContext {
+pub(super) fn resolve_injection_context(
+    field_empty: bool,
+    caret_context: Option<char>,
+) -> SentenceContext {
     if field_empty {
         SentenceContext::NewSentence
     } else if let Some(ch) = caret_context {
@@ -282,10 +336,11 @@ impl FocusedTextReader {
                 .as_ref()
                 .and_then(|pattern| pattern.CurrentIsReadOnly().ok())
                 .map(|value| value.as_bool());
-            let value_is_empty = value_pattern
+            let value_text = value_pattern
                 .as_ref()
                 .and_then(|pattern| pattern.CurrentValue().ok())
-                .map(|value| is_effectively_empty_text(&value.to_string()));
+                .map(|value| value.to_string());
+            let value_is_empty = value_text.as_deref().map(is_effectively_empty_text);
             let automation_id = element
                 .CurrentAutomationId()
                 .map(|value| value.to_string())
@@ -304,71 +359,71 @@ impl FocusedTextReader {
                 class_name.as_str(),
                 native_hwnd.as_str(),
             ]);
+            let target_id = element.CurrentProcessId().unwrap_or_default().max(0) as usize;
 
             if read_only == Some(true) {
                 return InjectionContextProbe {
                     context: SentenceContext::Unknown,
                     source: ContextProbeSource::UnsupportedControl,
                     context_tail: String::new(),
+                    context_head: String::new(),
+                    left_reliable: false,
+                    right_reliable: false,
                     control_type,
                     selection_state: SelectionState::Unknown,
                     control_identity_hash,
-                };
-            }
-
-            if value_is_empty == Some(true) {
-                return InjectionContextProbe {
-                    context: SentenceContext::NewSentence,
-                    source: ContextProbeSource::EmptyField,
-                    context_tail: String::new(),
-                    control_type,
-                    selection_state: SelectionState::Unknown,
-                    control_identity_hash,
+                    target_id,
                 };
             }
 
             let mut range_seen = false;
             let mut range_collapsed = false;
-            let mut caret_context: Option<String> = None;
+            let document_range = text_pattern
+                .as_ref()
+                .and_then(|pattern| pattern.DocumentRange().ok());
+            let mut context_edges: Option<ContextEdges> = None;
             let mut source = ContextProbeSource::UnsupportedControl;
 
-            if let Some(pattern) = &text_pattern2 {
-                let mut is_active = windows::core::BOOL::default();
-                if let Ok(range) = pattern.GetCaretRange(&mut is_active) {
-                    if is_active.as_bool() {
-                        range_seen = true;
-                        range_collapsed = true;
-                        caret_context = read_previous_context_text(&range);
-                        if caret_context.is_some() {
-                            source = ContextProbeSource::CaretLocal;
-                        } else {
-                            source = ContextProbeSource::EmptyField;
+            // TextPattern selection is authoritative for both collapsed carets
+            // and replacement selections, and gives us both insertion edges.
+            if let Some(pattern) = &text_pattern {
+                if let Ok(selection) = pattern.GetSelection() {
+                    if let Ok(len) = selection.Length() {
+                        if len == 1 {
+                            if let Ok(range) = selection.GetElement(0) {
+                                range_seen = true;
+                                range_collapsed = range_is_collapsed(&range);
+                                context_edges = read_context_edges(&range, document_range.as_ref());
+                                source = if context_edges.as_ref().is_some_and(|edges| {
+                                    edges.left_reliable || edges.right_reliable
+                                }) {
+                                    ContextProbeSource::CaretLocal
+                                } else {
+                                    ContextProbeSource::AmbiguousSelection
+                                };
+                            }
+                        } else if len > 1 {
+                            range_seen = true;
+                            source = ContextProbeSource::AmbiguousSelection;
                         }
                     }
                 }
             }
 
-            if caret_context.is_none() && !range_seen {
-                if let Some(pattern) = &text_pattern {
-                    if let Ok(selection) = pattern.GetSelection() {
-                        if let Ok(len) = selection.Length() {
-                            if len == 1 {
-                                if let Ok(range) = selection.GetElement(0) {
-                                    range_seen = true;
-                                    range_collapsed = range_is_collapsed(&range);
-                                    if range_collapsed {
-                                        caret_context = read_previous_context_text(&range);
-                                        source = if caret_context.is_some() {
-                                            ContextProbeSource::CaretLocal
-                                        } else {
-                                            ContextProbeSource::EmptyField
-                                        };
-                                    } else {
-                                        source = ContextProbeSource::AmbiguousSelection;
-                                    }
-                                }
-                            } else if len > 1 {
-                                range_seen = true;
+            if let Some(pattern) = &text_pattern2 {
+                let mut is_active = windows::core::BOOL::default();
+                if !range_seen {
+                    if let Ok(range) = pattern.GetCaretRange(&mut is_active) {
+                        if is_active.as_bool() {
+                            range_seen = true;
+                            range_collapsed = true;
+                            context_edges = read_context_edges(&range, document_range.as_ref());
+                            if context_edges
+                                .as_ref()
+                                .is_some_and(|edges| edges.left_reliable || edges.right_reliable)
+                            {
+                                source = ContextProbeSource::CaretLocal;
+                            } else {
                                 source = ContextProbeSource::AmbiguousSelection;
                             }
                         }
@@ -376,33 +431,94 @@ impl FocusedTextReader {
                 }
             }
 
-            let field_empty = caret_context.is_none() && source == ContextProbeSource::EmptyField;
-            let context = resolve_context_from_tail(field_empty, caret_context.as_deref());
-            if matches!(context, SentenceContext::Unknown) && caret_context.is_some() {
-                source = ContextProbeSource::AmbiguousSelection;
+            if !range_seen && value_is_empty == Some(true) {
+                source = ContextProbeSource::EmptyField;
+                context_edges = Some(ContextEdges {
+                    left: String::new(),
+                    right: String::new(),
+                    left_reliable: true,
+                    right_reliable: true,
+                });
             }
+
+            let ContextEdges {
+                left: context_tail,
+                right: context_head,
+                mut left_reliable,
+                mut right_reliable,
+            } = context_edges.unwrap_or(ContextEdges {
+                left: String::new(),
+                right: String::new(),
+                left_reliable: false,
+                right_reliable: false,
+            });
+            if source == ContextProbeSource::CaretLocal && range_collapsed {
+                if context_tail.is_empty()
+                    && left_reliable
+                    && value_text
+                        .as_ref()
+                        .is_some_and(|value| !value.is_empty() && !value.starts_with(&context_head))
+                {
+                    left_reliable = false;
+                }
+                if context_head.is_empty()
+                    && right_reliable
+                    && value_text
+                        .as_ref()
+                        .is_some_and(|value| !value.is_empty() && !value.ends_with(&context_tail))
+                {
+                    right_reliable = false;
+                }
+            }
+            if source == ContextProbeSource::CaretLocal
+                && context_tail.is_empty()
+                && context_head.is_empty()
+            {
+                if value_is_empty == Some(true) {
+                    source = ContextProbeSource::EmptyField;
+                    left_reliable = true;
+                    right_reliable = true;
+                } else {
+                    // Two empty edge strings are not proof of an empty editor.
+                    // Providers may return an empty TextPattern range when the
+                    // caret read failed. Require independent ValuePattern
+                    // confirmation before allowing sentence-start casing.
+                    source = ContextProbeSource::AmbiguousSelection;
+                    left_reliable = false;
+                    right_reliable = false;
+                }
+            }
+            let context = resolve_context_from_tail(
+                source == ContextProbeSource::EmptyField,
+                (source == ContextProbeSource::CaretLocal && left_reliable)
+                    .then_some(context_tail.as_str()),
+            );
             let selection_state = describe_selection_state(range_seen, range_collapsed);
 
             // Structural diagnostics for "blank box reads as full" (Antigravity /
             // Chromium controls). App-control metadata only — never tail content.
             log::debug!(
-                "injection: probe detail control_type={control_type} class={class_name} automation_id={automation_id} value_empty={value_is_empty:?} read_only={read_only:?} caret_active={range_seen} collapsed={range_collapsed} source={} context={} tail_len={} tail_newline={}",
+                "injection: probe detail control_type={control_type} class={class_name} automation_id={automation_id} value_empty={value_is_empty:?} read_only={read_only:?} caret_active={range_seen} collapsed={range_collapsed} source={} context={} tail_len={} head_len={} left_reliable={} right_reliable={} tail_newline={}",
                 source.as_str(),
                 context.as_str(),
-                caret_context.as_deref().map(|t| t.chars().count()).unwrap_or(0),
-                caret_context
-                    .as_deref()
-                    .map(|t| t.contains('\n') || t.contains('\r'))
-                    .unwrap_or(false),
+                context_tail.chars().count(),
+                context_head.chars().count(),
+                left_reliable,
+                right_reliable,
+                context_tail.contains('\n') || context_tail.contains('\r'),
             );
 
             InjectionContextProbe {
                 context,
                 source,
-                context_tail: caret_context.unwrap_or_default(),
+                context_tail,
+                context_head,
+                left_reliable,
+                right_reliable,
                 control_type,
                 selection_state,
                 control_identity_hash,
+                target_id,
             }
         }
     }

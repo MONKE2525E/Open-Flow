@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
   import { emit, invoke } from '../../tauri';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
@@ -17,6 +17,8 @@
   import { getLanguageSupport } from '../../transcriptionLanguageSupport';
   import { transcriptionModelStore } from '../../transcriptionModelStore.svelte';
   import { modelDisplayLabel, splitModelId } from './models';
+  import AccentColorPicker from './AccentColorPicker.svelte';
+  import { ACCENT_CHANGE_EVENT, animateAccentChange } from '../../accentTheme';
 
   let selectedLanguage = $state<TranscriptionLanguageCode>('en');
   let languageDropdownOpen = $state(false);
@@ -44,9 +46,9 @@
     noDevicesFound: 'No devices found',
   };
   let autostart = $state(false);
-  let contextualCaps = $state(true);
-  let autoSpacing = $state(true);
+  let contextualFormatting = $state(true);
   let capsLockUppercase = $state(false);
+  let legacyFeaturesError = $state('');
   let hotkey = $state(defaultHotkey);
   let recordingHotkey = $state(false);
   let capturedKeys = $state<string[]>([]);
@@ -171,8 +173,7 @@
       invoke<AppearanceMode | null>('get_setting', { key: 'appearance_mode' }),
       invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
       invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
-      invoke<boolean | null>('get_setting', { key: 'contextual_caps_enabled' }),
-      invoke<boolean | null>('get_setting', { key: 'auto_spacing_enabled' }),
+      invoke<boolean | null>('get_setting', { key: 'contextual_formatting_enabled' }),
       invoke<boolean | null>('get_setting', { key: 'caps_lock_uppercase_enabled' }),
       invoke<string[]>('get_microphones'),
       invoke<string | null>('get_setting', { key: 'microphone_device' }),
@@ -184,9 +185,8 @@
 
     autostart = val<boolean | null>(0, null) ?? false;
     appStore.cleanupEnabled = val<boolean | null>(5, null) ?? true;
-    contextualCaps = val<boolean | null>(6, null) ?? true;
-    autoSpacing = val<boolean | null>(7, null) ?? true;
-    capsLockUppercase = val<boolean | null>(8, null) ?? false;
+    contextualFormatting = val<boolean | null>(6, null) ?? true;
+    capsLockUppercase = val<boolean | null>(7, null) ?? false;
 
     const hk = val<string[] | null>(1, null);
     if (hk && hk.length === 2) hotkey = hk;
@@ -209,9 +209,9 @@
     }
     initialLanguageLoaded = true;
 
-    microphones = val<string[]>(9, []);
-    selectedMic = val<string | null>(10, null) ?? '';
-    appStore.legacyFeaturesEnabled = val<boolean | null>(11, null) ?? false;
+    microphones = val<string[]>(8, []);
+    selectedMic = val<string | null>(9, null) ?? '';
+    appStore.legacyFeaturesEnabled = val<boolean | null>(10, null) ?? false;
 
     results.forEach((r, i) => {
       if (r.status === 'rejected') console.error(`GeneralSection: invoke[${i}] failed:`, r.reason);
@@ -297,11 +297,13 @@
   }
 
   async function applyLegacyFeatures(value: boolean) {
+    legacyFeaturesError = '';
     appStore.legacyFeaturesEnabled = value;
     try {
       await saveSetting('legacy_features_enabled', value);
     } catch (err) {
       appStore.legacyFeaturesEnabled = !value;
+      legacyFeaturesError = 'Could not save Legacy pages. Your change was reverted.';
       console.error('save legacy_features_enabled failed:', err);
     }
   }
@@ -363,23 +365,13 @@
     if (e.key === 'Escape' && confirmCleanupOff) confirmCleanupOff = false;
   }
 
-  async function handleContextualCaps(value: boolean) {
-    contextualCaps = value;
+  async function handleContextualFormatting(value: boolean) {
+    contextualFormatting = value;
     try {
-      await saveSetting('contextual_caps_enabled', value);
+      await saveSetting('contextual_formatting_enabled', value);
     } catch (err) {
-      contextualCaps = !value;
-      console.error('save contextual_caps_enabled failed:', err);
-    }
-  }
-
-  async function handleAutoSpacing(value: boolean) {
-    autoSpacing = value;
-    try {
-      await saveSetting('auto_spacing_enabled', value);
-    } catch (err) {
-      autoSpacing = !value;
-      console.error('save auto_spacing_enabled failed:', err);
+      contextualFormatting = !value;
+      console.error('save contextual_formatting_enabled failed:', err);
     }
   }
 
@@ -401,6 +393,29 @@
     } catch (err) {
       appStore.appearanceMode = previous;
       console.error('save appearance_mode failed:', err);
+    }
+  }
+
+  async function handleAccentColor(color: string | null) {
+    const previous = appStore.accentColor;
+    await animateAccentChange(async () => {
+      appStore.accentColor = color;
+      await tick();
+    });
+    void emit(ACCENT_CHANGE_EVENT, color).catch((err) => {
+      console.warn('broadcast accent color failed:', err);
+    });
+    try {
+      await saveSetting('accent_color', color);
+    } catch (err) {
+      await animateAccentChange(async () => {
+        appStore.accentColor = previous;
+        await tick();
+      });
+      void emit(ACCENT_CHANGE_EVENT, previous).catch((emitErr) => {
+        console.warn('broadcast accent rollback failed:', emitErr);
+      });
+      console.error('save accent_color failed:', err);
     }
   }
 
@@ -606,7 +621,7 @@
 
 <h2 class="settings-h">General</h2>
 <h3 class="settings-subhead first">Dictation</h3>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-hotkey">
   <div><div class="label">Hotkey</div><div class="desc">Hold to record, release to transcribe</div></div>
   <button
     bind:this={keybindEl}
@@ -631,11 +646,11 @@
     (or hold <strong>Fn</strong> with F5). You can also pick any other key above.
   </p>
 {/if}
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-copy-last">
   <div><div class="label">Copy last dictation</div><div class="desc">Always available — re-copies your last dictation to the clipboard, in case a paste didn't land</div></div>
   <span class="badge key-badge">{isMac ? '⌥⌘C' : 'Ctrl+Alt+C'}</span>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-report">
   <div><div class="label">Report a dictation issue</div><div class="desc">Opens the complaint box right after a dictation, while the option is still showing</div></div>
   <div style="display:flex; align-items:center; gap:8px;">
     <button class="badge" onclick={clearRepairHotkey} type="button" style="cursor:pointer;">Clear</button>
@@ -653,7 +668,7 @@
     </button>
   </div>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-language">
   <div class="lang-setting-text"><div class="label">Spoken Language</div><div class="desc">Tells transcription what language to expect{languageScopeNote}</div></div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="ui-dropdown language-dropdown" onkeydown={(e) => { if (e.key === 'Escape' && languageDropdownOpen) { languageDropdownOpen = false; e.stopPropagation(); } }}>
@@ -696,7 +711,7 @@
     {/if}
   </div>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-microphone">
   <div>
     <div class="label">{microphoneCopy.inputDeviceLabel}</div>
     <div class="desc">{microphoneCopy.inputDeviceDescription}</div>
@@ -739,7 +754,7 @@
   </div>
 </div>
 <h3 class="settings-subhead">Appearance & System</h3>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-appearance">
   <div><div class="label">Appearance</div><div class="desc">{isMac ? 'Follow macOS or force a specific theme' : 'Follow Windows or force a specific theme'}</div></div>
   <div class="appearance-segment" role="radiogroup" aria-label="Appearance" bind:this={segmentEl}>
     {#if indicatorStyle}
@@ -756,32 +771,35 @@
     {/each}
   </div>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-accent">
+  <div><div class="label">Accent color</div><div class="desc">Used for actions, highlights, focus rings, and status details</div></div>
+  <AccentColorPicker value={appStore.accentColor} onchange={handleAccentColor} />
+</div>
+<div class="setting-row" data-setting-target="general-startup">
   <div><div class="label">Start on Boot</div><div class="desc">{isMac ? 'Launch Verenu when macOS starts' : 'Launch Verenu when Windows starts'}</div></div>
   <Toggle checked={autostart} onchange={handleAutostart} label="Start on boot" />
 </div>
 <h3 class="settings-subhead">Text processing</h3>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-cleanup">
   <div><div class="label">Cleanup</div><div class="desc">Runs an LLM-powered cleanup pass after transcription for tone and formatting.</div></div>
   <Toggle checked={appStore.cleanupEnabled} onchange={handleCleanup} label="Cleanup" />
 </div>
-<div class="setting-row">
-  <div><div class="label">Contextual capitalization</div><div class="desc">Lowercases the first word when injecting mid-sentence</div></div>
-  <Toggle checked={contextualCaps} onchange={handleContextualCaps} label="Contextual capitalization" />
+<div class="setting-row" data-setting-target="general-spacing">
+  <div><div class="label">Smart spacing &amp; capitalization</div><div class="desc">Adjusts capitalization and spacing around inserted text when the cursor context is clear.</div></div>
+  <Toggle checked={contextualFormatting} onchange={handleContextualFormatting} label="Smart spacing and capitalization" />
 </div>
-<div class="setting-row">
-  <div><div class="label">Automatic spacing</div><div class="desc">Adds a space before injected text when the cursor is after existing text</div></div>
-  <Toggle checked={autoSpacing} onchange={handleAutoSpacing} label="Automatic spacing" />
-</div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-caps-lock">
   <div><div class="label">Automatic caps lock detection</div><div class="desc">When Caps Lock is on, output your dictation in ALL CAPS</div></div>
   <Toggle checked={capsLockUppercase} onchange={handleCapsLockUppercase} label="Automatic caps lock detection" />
 </div>
 <h3 class="settings-subhead">Legacy</h3>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-legacy">
   <div><div class="label">Legacy pages</div><div class="desc">Bring back the standalone App Mappings settings page and the Dictionary/Snippets pages, superseded by Contexts.</div></div>
   <Toggle checked={appStore.legacyFeaturesEnabled} onchange={handleLegacyFeatures} label="Legacy pages" />
 </div>
+{#if legacyFeaturesError}
+  <p class="settings-error" role="alert">{legacyFeaturesError}</p>
+{/if}
 
 {#if confirmCleanupOff}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -885,6 +903,12 @@
   .keybind-btn.saving { opacity: 0.9; }
   .keybind-btn.success { background: color-mix(in srgb, var(--accent) 82%, white 18%); color: var(--on-accent); transform: scale(1.03); }
   .keybind-btn.error { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-line); animation: none; }
+  .settings-error {
+    margin: -2px 0 12px;
+    color: var(--danger);
+    font-size: 12px;
+    line-height: 1.45;
+  }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
   .mic-btn {
     max-width: 180px;
@@ -995,10 +1019,10 @@
     padding: 20px 20px 0;
   }
   .modal-title {
-    font-family: var(--serif);
-    font-size: 18px;
-    font-weight: 500;
-    letter-spacing: -0.015em;
+    font-family: var(--sans);
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
     color: var(--ink);
     margin: 0;
   }

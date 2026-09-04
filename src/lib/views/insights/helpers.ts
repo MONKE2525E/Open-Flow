@@ -143,3 +143,55 @@ export function intensityLevel(value: number, max: number): 0 | 1 | 2 | 3 | 4 {
   if (ratio > 0.12) return 2;
   return 1;
 }
+
+/** Hairline count on the Insights pace meter. */
+export const PACE_TICKS = 44;
+
+/**
+ * Scale for the pace meter: a round ceiling that always clears the personal
+ * best, plus the tick the best marker sits on (-1 when there is no best yet).
+ *
+ * Because the ceiling rounds up to the next 50, the best always lands in the
+ * last handful of ticks. Landing on the second-to-last one leaves a single
+ * orphan hairline trailing past the marker, which reads as a rendering
+ * artifact rather than scale — so within a tick of the end, the marker takes
+ * the end.
+ */
+export function paceScale(bestWpm: number, ticks = PACE_TICKS): { max: number; bestTick: number } {
+  const max = Math.max(200, Math.ceil(bestWpm / 50) * 50);
+  if (bestWpm <= 0) return { max, bestTick: -1 };
+  // Lower clamp: a best under half a tick still deserves a marker on tick 0
+  // rather than rounding away to "no best".
+  const tick = Math.max(0, Math.round((bestWpm / max) * ticks) - 1);
+  return { max, bestTick: tick >= ticks - 2 ? ticks - 1 : tick };
+}
+
+/** Hairline width on the pace meter, in CSS px. Mirrors `.tick { width }`. */
+export const PACE_TICK_W = 2;
+
+/**
+ * Left offset for pace-meter tick `i`, snapped to the device pixel grid.
+ *
+ * Letting flexbox spread the fractional slack put each hairline at a different
+ * subpixel phase: one starting mid-pixel antialiases across three columns and
+ * renders visibly wider and paler than a neighbour that happens to land on the
+ * grid, so an evenly-spaced row reads as mismatched line weights. Snapping is
+ * against *device* pixels, not CSS ones — under Windows display scaling (1.25×,
+ * 1.5×) whole CSS pixels still straddle the real grid. Costs at most one device
+ * pixel of spacing variance, which is invisible, and buys identical weight on
+ * every tick.
+ *
+ * Falls back to percentages until the row has been measured, so the first frame
+ * isn't every tick piled up at zero.
+ */
+export function paceTickOffset(
+  i: number,
+  rulerWidth: number,
+  dpr: number = (typeof window === 'undefined' ? 1 : window.devicePixelRatio) || 1,
+  ticks = PACE_TICKS
+): string {
+  const span = ticks - 1;
+  if (rulerWidth <= PACE_TICK_W) return `${(i * 100) / span}%`;
+  const raw = (i * (rulerWidth - PACE_TICK_W)) / span;
+  return `${Math.round(raw * dpr) / dpr}px`;
+}

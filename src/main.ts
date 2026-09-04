@@ -1,9 +1,12 @@
 import { mount } from 'svelte';
 import App from './App.svelte';
 import { invoke } from './lib/tauri';
+import { disableBrowserContextMenu } from './lib/disable-context-menu';
 import './theme.css';
 import './app.css';
 import './ui.css';
+
+disableBrowserContextMenu(); // The app webview lives until the process exits.
 
 const app = mount(App, {
   target: document.getElementById('app') as HTMLElement,

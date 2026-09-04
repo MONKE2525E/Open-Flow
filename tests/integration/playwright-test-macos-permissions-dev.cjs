@@ -9,7 +9,10 @@ const MAC_USER_AGENT =
 async function reachPermissionsStep(page) {
   await page.getByRole('button', { name: 'Get Started' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
-  await page.getByRole('button', { name: 'Continue' }).click();
+  // The API-key step uses "I'll add it later" in the default fork mode and
+  // "Continue" after a provider/key has been selected. Both paths lead to
+  // the permissions step, so keep this helper independent of that choice.
+  await page.getByRole('button', { name: /^(Continue|I'll add it later)$/ }).click();
   await page.getByRole('heading', { name: 'Check your macOS permissions' }).waitFor({ state: 'visible', timeout: TIMEOUT });
 }
 
@@ -55,7 +58,8 @@ async function reachPermissionsStep(page) {
       saved.global_input_seen = true;
       localStorage.setItem('verenu:dev-settings', JSON.stringify(saved));
     });
-    await page.getByRole('button', { name: 'Refresh' }).click();
+    // The visible permission surface must reconcile with macOS on its own;
+    // returning from System Settings must not require a manual refresh click.
     await page.locator('.setup-actionbar .btn-primary:has-text("Next")').waitFor({ state: 'visible', timeout: TIMEOUT });
     if (await primary.isDisabled()) {
       errors.push('Permission step Next button stayed disabled after all core permissions were granted.');
@@ -78,6 +82,16 @@ async function reachPermissionsStep(page) {
     });
     await settingsPage.locator('.settings-page').waitFor({ state: 'visible', timeout: TIMEOUT });
     await settingsPage.getByRole('heading', { name: 'Permissions' }).waitFor({ state: 'visible', timeout: TIMEOUT });
+    await settingsPage.getByText('Available', { exact: true }).waitFor({ state: 'visible', timeout: TIMEOUT });
+    const refresh = settingsPage.getByRole('button', { name: 'Refresh', exact: true });
+    await refresh.click();
+    if ((await refresh.textContent())?.replace(/\s/g, '') !== '↻Refresh') {
+      errors.push('Refresh changed its visible label while refreshing.');
+    }
+    if (await settingsPage.getByText('Checking…', { exact: true }).count()) {
+      errors.push('Permissions surface exposed a transient Checking state.');
+    }
+    await settingsPage.getByText('Available', { exact: true }).waitFor({ state: 'visible', timeout: TIMEOUT });
     await settingsPage.close();
 
     if (errors.length > 0) {

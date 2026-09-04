@@ -33,45 +33,71 @@ async function closeSettings(page) {
     await page.locator('.settings-nav-item:has-text("Models")').click();
     await page.locator('h2.settings-h:has-text("Models")').waitFor({ state: 'visible', timeout: 3000 });
 
-    // Transcription, Cleanup, and Local Models (the Models tab redesign
-    // unified cloud+local selection into the Transcription tile and gave
-    // local model download/management its own always-visible tile).
+    // Transcription and Clean-up. Local models no longer get a section of
+    // their own: downloading, deleting and prompt-editing them happens on the
+    // model's own row inside each task's picker.
     const tiles = page.locator('.task-tile');
     const tileCount = await tiles.count();
-    if (tileCount !== 3) errors.push(`Expected 3 model task tiles, found ${tileCount}`);
+    if (tileCount !== 2) errors.push(`Expected 2 model task tiles, found ${tileCount}`);
 
-    const transcriptionTileBtn = page.locator('.tile-head').first();
-    await transcriptionTileBtn.click();
-    await page.waitForTimeout(200);
+    // Model choice lives in a modal picker: Change sets the active model,
+    // Add fallback appends to the chain and can never replace the default.
+    const transcriptionTile = tiles.first();
+    await transcriptionTile.locator('.tile-btn-primary').click();
 
-    const openTile = page.locator('.task-tile.task-open').first();
-    await openTile.waitFor({ state: 'visible', timeout: 3000 });
+    const picker = page.locator('.picker-card');
+    await picker.waitFor({ state: 'visible', timeout: 3000 });
 
-    const customInput = openTile.locator('.model-input').first();
+    const customInput = picker.locator('.custom-input');
     await customInput.fill('custom-test-model');
     await customInput.press('Enter');
-    await page.waitForTimeout(250);
+    await page.waitForTimeout(300);
 
-    const added = openTile.locator('.model-name:has-text("custom-test-model")').first();
-    if (!(await added.count())) errors.push('Custom model was not added');
-
-    const addFallback = openTile.locator('.model-row').filter({ hasText: 'custom-test-model' }).locator('button:has-text("Add fallback")').first();
-    if (await addFallback.count()) {
-      await addFallback.click();
-      await page.waitForTimeout(250);
-    } else {
-      errors.push('Add fallback button missing for custom model');
+    // A hand-typed id becomes the active model, so it shows in the summary row.
+    const activeModel = transcriptionTile.locator('.summary-item.model-chip');
+    const activeText = (await activeModel.textContent()) || '';
+    if (!activeText.includes('custom-test-model')) {
+      errors.push(`Custom model did not become active, summary read "${activeText}"`);
     }
 
-    const fallbackRows = openTile.locator('.chain-row');
+    await transcriptionTile.locator('.add-fallback').click();
+    await picker.waitFor({ state: 'visible', timeout: 3000 });
+
+    // Rows that still need a key or a download are calls to action, not
+    // choices — clicking one opens setup instead of adding a fallback.
+    const fallbackChoice = picker
+      .locator('.model-row:not(:has(.row-state)) .row-main:visible')
+      .first();
+    if (!(await fallbackChoice.count())) {
+      errors.push('Fallback picker offered no models');
+    } else {
+      await fallbackChoice.click();
+      await page.waitForTimeout(300);
+    }
+
+    const fallbackRows = transcriptionTile.locator('.fallback-chip-item');
     if ((await fallbackRows.count()) < 1) errors.push('Fallback chain did not show added model');
+
+    // The product persists each setting through IPC. Wait for the mock's
+    // durable store before navigating away so this test checks persistence,
+    // rather than racing the queued save with the Settings unmount.
+    await page.waitForFunction(() => {
+      try {
+        const stored = JSON.parse(localStorage.getItem('__open_flow_tauri_mock_settings') || '{}');
+        return Array.isArray(stored.transcription_fallback_models)
+          && stored.transcription_fallback_models.length >= 1;
+      } catch {
+        return false;
+      }
+    }, null, { timeout: TIMEOUT });
 
     await closeSettings(page);
     await openSettings(page);
     await page.locator('.settings-nav-item:has-text("Models")').click();
 
-    const tileSummary = page.locator('.task-tile').first().locator('.summary-item').nth(2);
-    const summaryText = (await tileSummary.textContent()) || '';
+    const fallbackSummary = page.locator('.task-tile').first().locator('.summary-item.fallback-chip');
+    await fallbackSummary.waitFor({ state: 'visible', timeout: TIMEOUT });
+    const summaryText = (await fallbackSummary.textContent()) || '';
     if (!summaryText.includes('1')) errors.push('Fallback summary count did not persist');
 
     if (errors.length) {
@@ -88,3 +114,4 @@ async function closeSettings(page) {
     await browser.close();
   }
 })();
+

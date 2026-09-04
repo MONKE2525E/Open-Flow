@@ -22,7 +22,7 @@
   let failedEntry: { created_at: string } | null = null;
   let retrying = false;
   let failedTimer: ReturnType<typeof setTimeout> | null = null;
-  let cancelledEntry: { created_at: string } | null = null;
+  let cancelledEntry: { created_at: string; kind: 'cancelled' | 'interrupted' } | null = null;
   let resumingCancelled = false;
   let cancelledTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -31,6 +31,7 @@
   let recents: Entry[] = [];
   let stats: Stats = { total_words: 0, avg_wpm: 0, day_streak: 0 };
   let loading = true;
+  let historyError = '';
   let loadingMore = false;
   let hasMoreHistory = false;
 
@@ -153,11 +154,13 @@
       if (seq !== loadSeq) return;
       recents = reset ? (r ?? []) : [...recents, ...(r ?? [])];
       stats = s;
+      if (reset) historyError = '';
       hasMoreHistory = (r?.length ?? 0) === HISTORY_PAGE_SIZE;
     } catch (err) {
       if (seq !== loadSeq) return;
       console.error('Home load failed:', err);
       if (reset) {
+        historyError = err instanceof Error ? err.message : String(err);
         recents = [];
         stats = { total_words: 0, avg_wpm: 0, day_streak: 0 };
         hasMoreHistory = false;
@@ -205,6 +208,20 @@
       .then(hk => { if (hk?.length === 2) hotkey = hk; })
       .catch(() => { /* use platform default if setting unavailable */ });
     load();
+    invoke<{ created_at: string; kind: string } | null>('get_cancelled_capture')
+      .then((pending) => {
+        if (!pending) return;
+        cancelledEntry = {
+          created_at: pending.created_at,
+          kind: pending.kind === 'interrupted' ? 'interrupted' : 'cancelled',
+        };
+        if (cancelledTimer) clearTimeout(cancelledTimer);
+        cancelledTimer = setTimeout(() => {
+          cancelledEntry = null;
+          cancelledTimer = null;
+        }, 10 * 60 * 1000);
+      })
+      .catch(() => {});
 
     let mounted = true;
     const unlisteners: (() => void)[] = [];
@@ -245,8 +262,11 @@
       }, 10 * 60 * 1000);
     }));
 
-    trackListener(listen<string>('verenu:cancelled-capture', (ev) => {
-      cancelledEntry = { created_at: ev.payload };
+    trackListener(listen<{ created_at: string; kind?: string }>('verenu:cancelled-capture', (ev) => {
+      cancelledEntry = {
+        created_at: ev.payload.created_at,
+        kind: ev.payload.kind === 'interrupted' ? 'interrupted' : 'cancelled',
+      };
       if (cancelledTimer) clearTimeout(cancelledTimer);
       cancelledTimer = setTimeout(() => {
         cancelledEntry = null;
@@ -316,6 +336,8 @@
         {failedEntry}
         {cancelledEntry}
         {loading}
+        {historyError}
+        onRetryHistory={() => load()}
         {hasMoreHistory}
         {loadingMore}
         {retrying}
@@ -364,10 +386,10 @@
   }
 
   .page-h {
-    font-family: var(--serif);
-    font-size: 26px;
-    font-weight: 500;
-    letter-spacing: -0.02em;
+    font-family: var(--sans);
+    font-size: 23px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
     margin: 0 0 4px;
     line-height: 1.1;
     color: var(--ink);

@@ -41,23 +41,23 @@ static PILL_VISUALLY_ACTIVE: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "windows")]
 static PILL_PLACED_ONCE: AtomicBool = AtomicBool::new(false);
 
-/// Holds a resolved tone-profile label until the reveal that should carry it
+/// Holds a resolved context name until the reveal that should carry it
 /// actually runs. `show_pill`'s cross-monitor move animates the window into
 /// place and only calls `reveal_pill` (which emits `pill-state`) once that
 /// tween lands, deferred well past the moment the caller finishes its own
-/// synchronous call — a profile emitted directly at the call site could land
+/// synchronous call — a name emitted directly at the call site could land
 /// either before or after that deferred `pill-state`, and the frontend
-/// unconditionally clears `profileLabel` on `pill-state: recording`, so a
-/// profile that beat it there got silently wiped. Queuing it here and only
+/// unconditionally clears `contextLabel` on `pill-state: recording`, so a
+/// name that beat it there got silently wiped. Queuing it here and only
 /// emitting it from inside `reveal_pill`, right after `pill-state`, makes the
 /// ordering correct regardless of which path a given reveal takes.
-static PENDING_PILL_PROFILE: Mutex<Option<String>> = Mutex::new(None);
+static PENDING_PILL_CONTEXT: Mutex<Option<String>> = Mutex::new(None);
 
-/// Queues a tone-profile label to ride along with whichever reveal happens
-/// next, instead of emitting it immediately (see `PENDING_PILL_PROFILE`).
-pub(crate) fn queue_pill_profile(profile: &str) {
-    if let Ok(mut slot) = PENDING_PILL_PROFILE.lock() {
-        *slot = Some(profile.to_string());
+/// Queues a context name to ride along with whichever reveal happens
+/// next, instead of emitting it immediately (see `PENDING_PILL_CONTEXT`).
+pub(crate) fn queue_pill_context(context: &str) {
+    if let Ok(mut slot) = PENDING_PILL_CONTEXT.lock() {
+        *slot = Some(context.to_string());
     }
 }
 
@@ -99,7 +99,8 @@ fn create_pill_if_needed(app: &AppHandle) {
             // an explicit native colour, WebView2 can briefly repaint the
             // newly interactive surface as an opaque rectangle around the
             // capsule.
-            pill.set_background_color(Some(tauri::utils::config::Color(0, 0, 0, 0))).ok();
+            pill.set_background_color(Some(tauri::utils::config::Color(0, 0, 0, 0)))
+                .ok();
             harden_pill_window(&pill);
 
             // The repair pill actively steals OS keyboard focus while
@@ -143,7 +144,8 @@ fn create_pill_if_needed(app: &AppHandle) {
                     let Some(state) = app_for_check.try_state::<SharedState>() else {
                         return;
                     };
-                    let has_repair_session = state.inner().lock().is_ok_and(|st| st.repair.is_some());
+                    let has_repair_session =
+                        state.inner().lock().is_ok_and(|st| st.repair.is_some());
                     if has_repair_session {
                         super::clear_repair(state.inner());
                         hide_pill(&app_for_check);
@@ -341,23 +343,21 @@ fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opti
     PILL_VISUALLY_ACTIVE.store(true, Ordering::SeqCst);
 
     // Click-through for passive states so nothing behind the pill is blocked.
-    // Handsfree, error (Retry), and cancelled (Undo/Dismiss) all have real
-    // buttons that need real cursor events.
+    // Keep this list limited to states that actually render a live control.
+    // Some repair states are visual-only (for example the feedback prompt,
+    // applying, and done); treating those as interactive leaves an invisible
+    // click-capture surface over the app underneath the pill.
     let has_clickable_buttons = matches!(
         state,
         "handsfree"
-            | "error"
             | "cancelled"
             | "paste_failed"
             | "copied"
-            | "feedback_prompt"
             | "repair_input"
             | "repair_recording"
             | "repair_processing"
             | "repair_proposal"
-            | "repair_applying"
             | "repair_error"
-            | "repair_done"
     );
     pill.set_ignore_cursor_events(!has_clickable_buttons).ok();
     // Re-assert every reveal, not just once at window creation: WebView2 has
@@ -366,7 +366,8 @@ fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opti
     // set_ignore_cursor_events above does for every repair-flow state), which
     // showed up as whatever sits behind the pill flashing through for a
     // frame — e.g. clicking "Not good"/"Good" on the feedback card.
-    pill.set_background_color(Some(tauri::utils::config::Color(0, 0, 0, 0))).ok();
+    pill.set_background_color(Some(tauri::utils::config::Color(0, 0, 0, 0)))
+        .ok();
 
     // Show the window before emitting state so WebView2 is active when it
     // receives the event. WebView2 suspends event processing while hidden;
@@ -430,11 +431,15 @@ fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opti
     }
     pill.emit("pill-state", state).ok();
 
-    // Must fire after pill-state (see PENDING_PILL_PROFILE) — this is the
+    // Must fire after pill-state (see PENDING_PILL_CONTEXT) — this is the
     // one place every reveal path (immediate or animated) actually
     // converges, so it's the only point where the ordering is guaranteed.
-    if let Some(profile) = PENDING_PILL_PROFILE.lock().ok().and_then(|mut slot| slot.take()) {
-        pill.emit("pill-profile", profile).ok();
+    if let Some(context) = PENDING_PILL_CONTEXT
+        .lock()
+        .ok()
+        .and_then(|mut slot| slot.take())
+    {
+        pill.emit("pill-context", context).ok();
     }
 }
 
@@ -584,7 +589,7 @@ pub(crate) fn hide_pill(app: &AppHandle) {
 
         pill.emit("pill-state", "idle").ok();
         // Re-enable click-through: after a button-bearing state (handsfree,
-        // error, cancelled, paste_failed) reveal_pill left the window
+        // error, cancelled, interrupted, paste_failed) reveal_pill left the window
         // click-capturing. Idle is invisible, so it must never swallow clicks
         // in the pill's zone even though the pill content has disappeared.
         pill.set_ignore_cursor_events(true).ok();
@@ -602,6 +607,10 @@ pub(crate) fn hide_pill(app: &AppHandle) {
 /// frontend (`PillApp.svelte`), same as `show_error_pill`.
 pub(super) fn show_cancelled_pill(app: &AppHandle) {
     show_pill_msg(app, "cancelled", None);
+}
+
+pub(super) fn show_interrupted_pill(app: &AppHandle) {
+    show_pill_msg(app, "interrupted", None);
 }
 
 /// Shows the pill's "Paste failed" state — injection didn't land (or
@@ -639,16 +648,16 @@ pub(crate) fn emit_pill_stage(app: &AppHandle, stage: &str) {
     }
 }
 
-/// Emits the resolved tone profile (e.g. "casual") to the pill window so it
-/// can show which style will apply to the current dictation. Emitted from the
-/// pipeline itself — the frontend never re-resolves it.
-pub(crate) fn emit_pill_profile(app: &AppHandle, profile: &str) {
+/// Emits the resolved context name (e.g. "Slack") to the pill window so it
+/// can show where the current dictation is headed. Emitted from the pipeline
+/// itself — the frontend never re-resolves it.
+pub(crate) fn emit_pill_context(app: &AppHandle, context: &str) {
     match app.get_webview_window("pill") {
         Some(pill) => {
-            let sent = pill.emit("pill-profile", profile).is_ok();
-            log::debug!("pill: profile={profile} sent={sent}");
+            let sent = pill.emit("pill-context", context).is_ok();
+            log::debug!("pill: context={context} sent={sent}");
         }
-        None => log::debug!("pill: profile={profile} sent=false (no pill window)"),
+        None => log::debug!("pill: context={context} sent=false (no pill window)"),
     }
 }
 

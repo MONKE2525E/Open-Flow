@@ -15,6 +15,7 @@ use chrono::{DateTime, Duration, NaiveDateTime, SecondsFormat, Utc};
 mod cache;
 mod chains;
 mod clipboard_phrase;
+pub(crate) mod failover;
 mod finalize;
 #[cfg(any(test, debug_assertions))]
 mod fixture;
@@ -23,8 +24,11 @@ mod pill;
 mod pill_animation;
 mod pill_position;
 mod repair;
+mod repair_proposal;
 mod session;
-mod stages;
+mod stages_cleanup;
+mod stages_style;
+mod stages_transcription;
 mod state;
 use cache::*;
 use chains::*;
@@ -42,15 +46,19 @@ use gates::{
     MIN_RECORDING_MS, MIN_RECORDING_RMS,
 };
 pub(crate) use pill::{
-    emit_pill_profile, emit_pill_stage, hide_pill, pill_wants_repair_focus, show_clipboard_warning_pill, show_copied_pill, show_pill, update_pill_state,
+    emit_pill_context, emit_pill_stage, hide_pill, pill_wants_repair_focus,
+    show_clipboard_warning_pill, show_copied_pill, show_pill, update_pill_state,
 };
-use pill::{reject_with_pill, show_cancelled_pill, show_error_pill, show_paste_failed_pill};
+use pill::{reject_with_pill, show_error_pill, show_paste_failed_pill};
 pub(crate) use pill_position::{
     apply_pill_placement, placement_for_current_monitor, PillPlacement,
 };
-pub use session::*;
 pub(crate) use repair::*;
-use stages::*;
+use repair_proposal::*;
+pub(crate) use session::*;
+use stages_cleanup::*;
+use stages_style::*;
+use stages_transcription::*;
 pub use state::*;
 
 #[derive(Clone, Debug)]
@@ -263,29 +271,31 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     // for any other window. Best-effort: a probe failure just means the
     // context resolves by exe alone, same as before this feature existed.
     let browser_domain = if window_context::is_browser_exe(&process_name) {
-        browser_probe::read_active_browser_domain()
+        browser_probe::read_browser_domain_for_window(target.id)
     } else {
         None
     };
-    let resolved_context = match context::resolve_context(&db_handle, &process_name, browser_domain.as_deref())
-    {
-        Ok(resolved) => resolved,
-        Err(error) => {
-            log::warn!("pipeline: context resolution failed, using Everywhere error={error}");
-            db::Context {
-                id: db::EVERYWHERE_CONTEXT_ID,
-                name: "Everywhere".to_string(),
-                is_everywhere: true,
-                icon: None,
-                tone: None,
-                cleanup_intensity: None,
-                color: None,
-                custom_instructions: None,
-                created_at: String::new(),
-                updated_at: String::new(),
+    let resolved_context =
+        match context::resolve_context(&db_handle, &process_name, browser_domain.as_deref()) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                log::warn!("pipeline: context resolution failed, using Everywhere error={error}");
+                db::Context {
+                    id: db::EVERYWHERE_CONTEXT_ID,
+                    name: "Everywhere".to_string(),
+                    is_everywhere: true,
+                    icon: None,
+                    tone: None,
+                    cleanup_intensity: None,
+                    color: None,
+                    custom_instructions: None,
+                    contextual_formatting_disabled: false,
+                    pinned_at: None,
+                    created_at: String::new(),
+                    updated_at: String::new(),
+                }
             }
-        }
-    };
+        };
     let context_id = resolved_context.id;
     log::info!("pipeline: start gen={generation} target_id={}", target.id);
 
@@ -325,6 +335,9 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     let Some((mut captured_audio, mut rms, mut raw_rms)) =
         stop_and_capture_audio(&app, session, exclusive_mic_session_id).await
     else {
+        // stop_and_capture_audio already abandons live on its own failure
+        // paths; call again so a future None return cannot leave a spool.
+        failover::abandon_live();
         state::leave_stopping_if_owned(&state, generation);
         return;
     };
@@ -335,6 +348,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
                 Err(err) => {
                     log::error!("pipeline: {err}");
                     reject_with_pill(&app, "Failed to prepare recording audio");
+                    failover::abandon_live();
                     state::leave_stopping_if_owned(&state, generation);
                     return;
                 }
@@ -358,6 +372,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         silence_floor,
         active_gain,
     ) {
+        failover::abandon_live();
         state::leave_stopping_if_owned(&state, generation);
         return;
     }
@@ -379,6 +394,28 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         captured_audio: captured_audio.clone(),
         target,
     };
+    {
+        let (id, started) = lock_state(&state)
+            .ok()
+            .map(|st| (st.failover_session_id.clone(), st.failover_started_at_unix))
+            .unwrap_or((None, 0));
+        if let Some(id) = id {
+            let started = if started != 0 {
+                started
+            } else {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0)
+            };
+            failover::commit_capture(
+                &captured_audio,
+                &id,
+                failover::FailoverKind::Processing,
+                started,
+            );
+        }
+    }
     if !state::install_processing(&state, generation, active) {
         // Superseded between Stopping and here (should not happen in
         // practice — nothing else can transition out of Stopping — but an
@@ -388,8 +425,14 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     }
 
     let stage_config = std::time::Instant::now();
-    let Some((cfg, profile, app_context)) =
-        open_config_and_context(&app, &process_name, Some(&resolved_context)).await
+    let Some((cfg, profile, app_context)) = open_config_and_context(
+        &app,
+        &process_name,
+        target.id,
+        browser_domain.as_deref(),
+        Some(&resolved_context),
+    )
+    .await
     else {
         // open_config_and_context already shows its own error/pill on
         // failure — no separate emit_pipeline_failed here (matches its
@@ -397,9 +440,9 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         state::leave_processing_if_owned(&state, generation);
         return;
     };
-    // The profile is now resolved — surface it so the pill can show which
-    // style applies to this dictation (same value emitted at record start).
-    emit_pill_profile(&app, &profile);
+    // Surface the resolved context so the pill can show where this dictation
+    // is going (same value emitted at record start, now domain-refined).
+    emit_pill_context(&app, &resolved_context.name);
     log::debug!(
         "pipeline: config t_provider={} c_provider={} t_model={} c_model={} cleanup_enabled={} intensity={} app_context_hint={} profile={}",
         cfg.transcription_provider,
@@ -575,7 +618,9 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
 
     let (raw_for_cleanup, clipboard_plan, clipboard_warning) =
         prepare_clipboard_phrase(&cfg, &raw).await;
-    let clipboard_instruction = clipboard_plan.as_ref().map(clipboard_phrase::cleanup_instruction);
+    let clipboard_instruction = clipboard_plan
+        .as_ref()
+        .map(clipboard_phrase::cleanup_instruction);
 
     let stage_cleanup = std::time::Instant::now();
     // Only advertise the cleaning stage when the cleanup LLM will actually run
@@ -588,6 +633,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         true,
         &cfg.cleanup_intensity,
         &profile,
+        cfg.cleanup_intensity == "none" && alternate.is_some(),
     );
     if cleanup_will_run_llm {
         emit_pill_stage(&app, "cleaning");
@@ -682,21 +728,23 @@ async fn prepare_clipboard_phrase(
     Option<&'static str>,
 ) {
     if !cfg.clipboard_phrase_enabled
-        || clipboard_phrase::replace_phrase_with_marker(raw, &cfg.clipboard_phrase, String::new()).is_none()
+        || clipboard_phrase::replace_phrase_with_marker(raw, &cfg.clipboard_phrase, String::new())
+            .is_none()
     {
         return (raw.to_string(), None, None);
     }
 
-    match injection::read_current_clipboard_text().await.filter(|text| !text.trim().is_empty()) {
-        Some(text) => match clipboard_phrase::replace_phrase_with_marker(
-            raw,
-            &cfg.clipboard_phrase,
-            text,
-        ) {
-            Some(plan) => (plan.pre_cleanup.clone(), Some(plan), None),
-            None => {
-                log::debug!("pipeline: clipboard phrase match disappeared before planning");
-                (raw.to_string(), None, None)
+    match injection::read_current_clipboard_text()
+        .await
+        .filter(|text| !text.trim().is_empty())
+    {
+        Some(text) => {
+            match clipboard_phrase::replace_phrase_with_marker(raw, &cfg.clipboard_phrase, text) {
+                Some(plan) => (plan.pre_cleanup.clone(), Some(plan), None),
+                None => {
+                    log::debug!("pipeline: clipboard phrase match disappeared before planning");
+                    (raw.to_string(), None, None)
+                }
             }
         }
         None => (
@@ -774,7 +822,9 @@ pub async fn retry_transcription_impl(
     let db_handle = app.state::<DbHandle>().inner().clone();
     let context = db::query_context(&db_handle, capture.context_id).ok();
     capture.profile = apply_app_style_overrides(&mut cfg, mapping.as_ref(), context.as_ref());
-    emit_pill_profile(app, &capture.profile);
+    if let Some(name) = context.as_ref().map(|c| c.name.as_str()) {
+        emit_pill_context(app, name);
+    }
 
     emit_pill_stage(app, "transcribing");
     let Some((raw_unorm, api_used, alternate)) =
@@ -807,12 +857,15 @@ pub async fn retry_transcription_impl(
         true,
         &cfg.cleanup_intensity,
         &capture.profile,
+        cfg.cleanup_intensity == "none" && alternate.is_some(),
     ) {
         emit_pill_stage(app, "cleaning");
     }
     let (raw_for_cleanup, clipboard_plan, clipboard_warning) =
         prepare_clipboard_phrase(&cfg, &raw).await;
-    let clipboard_instruction = clipboard_plan.as_ref().map(clipboard_phrase::cleanup_instruction);
+    let clipboard_instruction = clipboard_plan
+        .as_ref()
+        .map(clipboard_phrase::cleanup_instruction);
     let Some((final_text, dict_entries, cleanup_cache_key, cleanup_api_used)) =
         run_cleanup_and_snippets(
             app,

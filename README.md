@@ -5,7 +5,7 @@
 <p align="center">
   Hold the hotkey, talk, release, and Verenu drops cleaned-up text into the app you were already using.
   <br/>
-  <em>Local-first AI dictation for Windows and macOS. Bring your own API keys. No subscriptions. No telemetry.</em>
+  <em>Local-first AI dictation for Windows and macOS. Bring your own cloud API keys when needed. No subscriptions. No telemetry.</em>
 </p>
 
 <p align="center">
@@ -22,13 +22,17 @@ It records locally, sends audio and text only to the AI providers you choose, ke
 
 ## What It Does
 
-- Hold-to-record dictation with global hotkeys
-- Provider choice for transcription and cleanup, including local Parakeet V3 transcription
-- Snippets, personal dictionary, and app-specific formatting profiles
-- Local history, local settings, and local data export/import
+- Hold-to-record dictation with global hotkeys, plus a handsfree toggle mode
+- Contexts: group apps and websites with the tone, cleanup rules, custom instructions, vocabulary, and snippets that belong there
+- Provider choice for transcription and cleanup, including fully local Parakeet V3 transcription and local LLM cleanup
+- Local history, insights, local settings, and local data export/import
 - Optional auto-learn from repeated manual corrections
 
-For more details: [Cleanup Levels](docs/CLEANUP_LEVELS.md), [Local Transcription](docs/LOCAL_TRANSCRIPTION.md), [Dictionary](docs/DICTIONARY.md), [Snippets](docs/SNIPPETS.md), and [App Mappings & Profiles](docs/APP_MAPPINGS.md).
+Contexts are the main place to configure app-specific behavior. They connect apps and websites to cleanup, tone, custom instructions, vocabulary, and snippets. The old standalone pages remain available only as legacy compatibility pages.
+
+For more details: [Contexts](docs/CONTEXTS.md), [Vocabulary](docs/VOCABULARY.md), [Snippets](docs/SNIPPETS.md), [Cleanup Levels](docs/CLEANUP_LEVELS.md), and [Local Transcription](docs/LOCAL_TRANSCRIPTION.md).
+
+Appearance can follow the operating system or stay in light or dark mode. Page surfaces use neutral near-white and charcoal colors, and the accent can be changed independently to any six-digit hex color. See [Appearance and settings](docs/APPEARANCE.md).
 
 ## Platform Support
 
@@ -44,12 +48,12 @@ Verenu supports both Windows and macOS.
 ### macOS
 
 - Apple Silicon and Intel builds are supported
-- Default hold-to-record hotkey: <kbd>Fn</kbd> + <kbd>Control</kbd>
+- Default hold-to-record hotkey: <kbd>Option</kbd> + <kbd>Space</kbd>
 - API keys are stored in Keychain
 - Verenu needs macOS permissions for real-world use:
   - Microphone, to capture audio
   - Accessibility, to inject text and interact with focused apps
-  - Input Monitoring, to detect the global hotkey while other apps are focused
+  - Notifications are optional and only affect status and update alerts
 
 macOS support is not an afterthought anymore. It is part of the normal app flow, and the repo includes macOS-specific hotkey, permissions, injection, updater, and key-storage logic.
 
@@ -59,7 +63,7 @@ For more details: [Install Verenu](docs/INSTALL.md), [Troubleshooting](docs/TROU
 
 1. Verenu records audio locally while you hold the hotkey.
 2. When you release, it either transcribes locally or sends the audio to your chosen cloud transcription provider.
-3. If cleanup is enabled, it sends the resulting raw text to your chosen cleanup model so filler words, punctuation, tone, snippets, and formatting rules can be applied.
+3. If cleanup is enabled, it sends the resulting raw text to your chosen cleanup model so filler words, punctuation, tone, context instructions, and formatting rules can be applied.
 4. It pastes the final text back into the app that had focus when you started.
 5. It stores local history and optional learning data on your machine.
 
@@ -74,16 +78,16 @@ Verenu's own server (`api.verenu.com`) serves only public app metadata — relea
 - API keys in Windows Credential Manager or macOS Keychain
 - Settings in local app storage
 - Transcription history in local SQLite
-- Dictionary entries, snippets, and auto-learn data in local SQLite
-- Update-dismiss state, model preferences, and app mappings
+- Context groups, vocabulary, snippets, and auto-learn data in local SQLite
+- Update-dismiss state, model preferences, and context group targets
 - Local logs unless you explicitly export them
 
 ### Leaves your device
 
-- Local transcription plus Cleanup Off keeps both audio and transcript on device after the model download
+- Local transcription plus local cleanup, or Cleanup Off, keeps audio and transcript on device after the model download
 - Local transcription plus cloud cleanup keeps audio on device but sends transcript text to the cleanup provider
 - Cloud transcription sends recorded audio to your chosen transcription provider
-- Snippet instructions, cleanup settings, and selected model metadata go with cleanup requests
+- Context instructions, cleanup settings, and selected model metadata go with cleanup requests
 - Active app context may be sent if you enable app-context hints
 - Update checks hit GitHub release metadata
 - Provider status and health checks hit `api.verenu.com` (public status only, no dictated content, keys, or history). You can disable these background checks in Settings → Privacy.
@@ -96,10 +100,11 @@ You choose the providers. Verenu does not lock you into one stack.
 
 | Provider | Transcription | Cleanup |
 | --- | --- | --- |
-| Local | `parakeet-v3` | none |
+| Local | On-device models | On-device models or none |
 | Groq | `whisper-large-v3-turbo` | `qwen/qwen3.6-27b` |
 | OpenAI | `gpt-4o-transcribe` | `gpt-4o-mini` |
-| Google | `gemini-3.5-flash` | `gemini-3.5-flash` |
+| Google | `gemini-3.5-transcribe` | `gemini-3.5-flash-lite` |
+| AssemblyAI | `universal-3-5-pro` or `universal-2` | not available |
 
 If you care about privacy, speed, retention, or cost, judge the provider on its own policy. Once data leaves Verenu and hits a provider API, that provider's rules apply. Local transcription with cloud cleanup is still not fully local because the transcript text leaves the device.
 

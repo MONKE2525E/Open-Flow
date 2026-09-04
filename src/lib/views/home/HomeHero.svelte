@@ -21,7 +21,7 @@
     border-radius: var(--r-lg);
     overflow: hidden;
     margin-bottom: 16px;
-    height: clamp(112px, 14vw, 160px);
+    height: clamp(104px, 12vw, 136px);
     background: var(--arm-950);
   }
 
@@ -30,15 +30,15 @@
     position: absolute;
     right: -80px; top: -80px;
     width: 360px; height: 360px;
-    background: radial-gradient(circle, rgba(217,119,87,0.22) 0%, transparent 60%);
+    background: radial-gradient(circle, color-mix(in srgb, var(--accent) 22%, transparent) 0%, transparent 60%);
     pointer-events: none;
   }
 
-  .hero-photo-content { position: relative; padding: 22px 28px; max-width: min(520px, 100%); }
+  .hero-photo-content { position: relative; padding: 18px 24px; max-width: min(500px, 100%); }
 
   .hero-photo-title {
-    font-family: var(--serif);
-    font-size: 22px;
+    font-family: var(--sans);
+    font-size: 19px;
     font-weight: 500;
     letter-spacing: -0.02em;
     margin: 0 0 8px;
@@ -65,13 +65,13 @@
   }
 
   .hero-em {
-    font-family: var(--serif);
+    font-family: var(--sans);
     font-style: italic;
     color: color-mix(in srgb, var(--pill-fg) 82%, transparent);
   }
 
   @media (max-width: 720px) {
     .hero-photo-content { padding: 18px 20px; }
-    .hero-photo-title { font-size: 20px; }
+    .hero-photo-title { font-size: 18px; }
   }
 </style>

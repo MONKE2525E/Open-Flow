@@ -24,13 +24,11 @@ Stored locally in app storage and SQLite:
 
 - Settings
 - Provider and model preferences
-- App mappings and tone preferences
-- Context groups, their app/website targets, and per-context tone/cleanup overrides
+- Context groups, their app/website targets, per-context tone/cleanup overrides, vocabulary, and snippets
 - Transcription history
-- Dictionary entries
-- Snippets
 - Auto-learn events and candidate data
 - Update-dismiss state
+- A short-lived dictation failover spool (dictation-failover/ under the app data directory): in-progress audio so a crash or reboot can offer Continue. Deleted after history is saved, on dismiss, or after 24 hours. Not included in backups or LAN sync.
 
 ### Logs
 
@@ -50,13 +48,12 @@ Manual export and import stay local unless you choose to move the file elsewhere
 Current backup export includes:
 
 - Settings
-- Dictionary
-- Snippets
+- Context groups, vocabulary, and snippets
 - Derived stats
 
 Current backup export does not include full transcription history.
 
-Import and restore paths validate supported setting values and reject oversized prompt overrides, snippet bodies, and unsupported app-mapping values instead of silently accepting junk.
+Import and restore paths validate supported setting values and reject oversized prompt overrides, snippet bodies, and unsupported context-target values instead of silently accepting junk. Legacy app-mapping exports remain supported for migration.
 
 ## What Leaves Your Device
 
@@ -80,7 +77,7 @@ After transcription, Verenu can send text to a cleanup model so it can:
 - remove filler words
 - fix punctuation
 - apply formatting rules
-- apply snippet instructions
+- apply context instructions, vocabulary, and snippet instructions
 - apply tone or cleanup intensity
 
 That means raw transcription text leaves your device when cleanup is enabled, including when transcription itself ran locally.
@@ -111,8 +108,8 @@ any local configuration is mutated.
 
 Depending on your settings and the feature being used, Verenu may also send:
 
-- formatting profile or tone selection
-- snippet instructions
+- context tone and cleanup settings
+- context instructions, vocabulary, and snippet instructions
 - selected model metadata
 - active app context, if app-context hints are enabled
 
@@ -128,11 +125,17 @@ On Windows and macOS, installing an update opens the published GitHub asset so t
 
 When you attach a website to a context group, Verenu resolves the domain over DNS before accepting it, so a typo can't create a website target that will never match anything. This is a plain DNS lookup, not an HTTP request — it does not fetch the site, send cookies, or reveal your IP to the site owner beyond what any DNS resolution already does. Nothing about your dictation, history, or other settings is included; only the domain you typed leaves your device, to your configured DNS resolver.
 
+### Website favicons
+
+To show a real site icon next to a website context target (in the sidebar and on the context page), Verenu asks Google's public favicon service for that site's icon. Only the bare hostname you attached (for example `mail.google.com`) is sent — never a full URL, path, dictation, history, or API key — and the site itself is never contacted.
+
+Each hostname is requested at most once: the result is cached on disk under the app data directory, including the "this site has no icon" outcome, so the icon is not re-fetched when the sidebar rerenders, you switch pages, or you restart the app. If the lookup fails, the row falls back to a generic globe glyph.
+
 ### Connectivity check
 
-While the app window is open, Verenu periodically sends a lightweight `HEAD` request to `api.github.com` to detect whether you are online and show the offline indicator.
+Verenu first reads the operating system's network state. Windows uses the Network List Manager and macOS checks route reachability. These checks do not send traffic.
 
-That request carries no dictated text, history, snippets, or API keys.
+If a real provider or Verenu service request fails, Verenu can run a short active probe to distinguish a local connection problem from a provider outage. When service checks are enabled, it checks Verenu's health endpoint first, then uses `www.google.com` as an independent second check. This probe is limited to the failure path and carries no dictated text, history, snippets, or API keys.
 
 ### Provider status checks
 
@@ -156,8 +159,7 @@ This changes UI loading behavior, not storage location. The full history databas
 `api.verenu.com` is in the product path today (release/update metadata and provider status), but even so, Verenu does not send any of this to that server or any other Verenu-owned server:
 
 - transcription history
-- dictionary entries by default
-- snippets by default
+- context vocabulary and snippets by default
 - local settings backups by default
 - analytics events
 - user profiles
@@ -169,17 +171,17 @@ That said, once data is sent to a third-party AI provider, that provider's reten
 
 | Feature | Stays local | Leaves device |
 | --- | --- | --- |
-| Hold-to-record audio capture | audio before release | nothing until transcription starts |
+| Hold-to-record audio capture | audio before release, plus a local crash-recovery spool until the take is saved, dismissed, or 24 hours old | nothing until transcription starts |
 | Local transcription + Cleanup Off | audio, transcript, settings, and history | nothing after the model download |
 | Local transcription + cloud cleanup | audio, local model, local capture state | transcript text and cleanup context to selected cleanup provider |
 | Cloud transcription | local capture state | audio to selected transcription provider |
 | Cleanup | local settings and local cache | raw transcription text and cleanup context to selected cleanup provider |
 | Repair diagnosis | complaint and bounded in-memory snapshot | complaint and allowlisted bounded diagnostic context to the configured repair provider, only after Analyze |
-| Dictionary and snippets | SQLite | nothing by default |
+| Context vocabulary and snippets | SQLite | nothing by default |
 | Context website check | current app state stays local | the typed domain, via a plain DNS lookup, when you attach a website to a context group |
 | Auto-learn | local monitoring data and promoted entries | nothing by default |
 | Update check | current app state stays local | GitHub release metadata request |
-| Connectivity check | current app state stays local | periodic `HEAD` request to `api.github.com` |
+| Connectivity check | current app state stays local | native OS network-state check; a short active probe only after a real request fails |
 | Provider status check | current app state stays local | optional periodic GET to `api.verenu.com/v1/provider-status` (every 5 min, plus an immediate recheck after a provider-side pipeline failure) |
 | API health check | current app state stays local | optional periodic GET to `api.verenu.com/v1/health` (every 20 min) |
 | Export data | backup file on local disk | nothing unless you share the file yourself |

@@ -119,9 +119,24 @@
   .axis {
     display: flex;
     justify-content: space-between;
+    gap: 6px;
     font-size: 10.5px;
     color: var(--ink-mute);
     margin-top: 6px;
+    min-width: 0;
+  }
+
+  .axis span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  @container insights (max-width: 420px) {
+    .strip { gap: 2px; }
+    .axis span:nth-child(2),
+    .axis span:nth-child(4) { display: none; }
   }
 
   .foot {

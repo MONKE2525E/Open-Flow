@@ -58,7 +58,11 @@ async function waitForSingleSettingsPanel(page) {
       { timeout: 3_000 },
     );
     console.log('  âœ“ Home history pagination loads the final page');
-    await page.locator('.nav-item:has-text("Contexts")').click();
+    // Contexts moved into the sidebar as their own rows; clicking one is now
+    // the navigation that used to be the "Contexts" nav item. Targeted by name
+    // rather than position: pinned contexts sort above the rest, so the first
+    // row is not a fixed context.
+    await page.locator('.ctx-row').filter({ hasText: 'Everywhere' }).first().click();
     const wrapperCountHandle = await page.waitForFunction(
       () => document.querySelectorAll('.page-wrapper').length >= 2
         ? document.querySelectorAll('.page-wrapper').length
@@ -78,13 +82,12 @@ async function waitForSingleSettingsPanel(page) {
         console.log(`  ✓ Outgoing page wrapper is inert during transition; incoming opacity ${Number(incomingOpacity).toFixed(2)}`);
       }
     }
-    await page.locator('h1.page-h:has-text("Contexts")').waitFor({ state: 'visible', timeout: 3_000 });
+    await page.locator('.context-header h2:has-text("Everywhere")').waitFor({ state: 'visible', timeout: 3_000 });
 
     // ── Navigation: each click must actually change the visible view ──────────
     const navMap = [
       { label: 'Home',     heading: 'Welcome back' },
       { label: 'Insights', heading: 'Insights'      },
-      { label: 'Contexts', heading: 'Contexts'     },
       { label: 'Style',    heading: 'Style'        },
     ];
 
@@ -126,9 +129,9 @@ async function waitForSingleSettingsPanel(page) {
       await page.locator(`h1.page-h:has-text("${label}")`).waitFor({ state: 'visible', timeout: 3_000 });
       console.log(`  ✓ Legacy ${label} page reachable from primary nav`);
     }
-    const contextsCount = await page.locator('.nav-item:has-text("Contexts")').count();
-    if (contextsCount !== 0) throw new Error('Contexts nav item should be hidden while Legacy pages is on');
-    console.log('  ✓ Contexts nav item hidden while Legacy pages is on');
+    const contextsCount = await page.locator('.ctx-section').count();
+    if (contextsCount !== 0) throw new Error('Contexts section should be hidden while Legacy pages is on');
+    console.log('  ✓ Contexts sidebar section hidden while Legacy pages is on');
 
     // ── Settings: open ────────────────────────────────────────────────────────
     console.log('Opening Settings...');

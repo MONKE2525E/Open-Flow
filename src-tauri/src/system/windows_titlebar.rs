@@ -1,5 +1,8 @@
 use serde::Serialize;
-use std::{os::windows::ffi::OsStrExt, sync::OnceLock};
+use std::{
+    os::windows::ffi::OsStrExt,
+    sync::{Mutex, OnceLock},
+};
 use tauri::{Emitter, Theme, WebviewWindow};
 use windows::{
     core::PCSTR,
@@ -30,6 +33,47 @@ struct NativeMetrics {
     extends_content: i32,
 }
 
+impl NativeMetrics {
+    /// Fields the frontend actually mirrors (see `applyNativeTitleBarMetrics`
+    /// in App.svelte: height + caption insets + scale). Window/client rects
+    /// and the client origin move on every drag/resize but are unconsumed, so
+    /// they must not by themselves trigger a re-emit.
+    fn frontend_relevant_eq(&self, other: &Self) -> bool {
+        self.titlebar_height == other.titlebar_height
+            && self.left_inset == other.left_inset
+            && self.right_inset == other.right_inset
+            && self.dpi == other.dpi
+            && self.is_maximized == other.is_maximized
+            && self.extends_content == other.extends_content
+    }
+}
+
+/// Last metrics payload forwarded to the frontend. Window events fire
+/// per-frame during a move/resize drag; without this every frame paid for a
+/// WebView2 event plus a full-document style recalc from the CSS-var writes,
+/// even though height/insets/scale are position- and size-independent.
+static LAST_EMITTED: OnceLock<Mutex<Option<NativeMetrics>>> = OnceLock::new();
+
+fn emit_if_changed(window: &WebviewWindow, native: &NativeMetrics) {
+    let changed = match LAST_EMITTED.get_or_init(|| Mutex::new(None)).lock() {
+        Ok(mut guard) => {
+            let changed = guard
+                .map(|prev| !prev.frontend_relevant_eq(native))
+                .unwrap_or(true);
+            if changed {
+                *guard = Some(*native);
+            }
+            changed
+        }
+        // A poisoned lock must never swallow a metrics update — emit and let
+        // the next call re-seed the cache.
+        Err(_) => true,
+    };
+    if changed {
+        let _ = window.emit("verenu:native-titlebar-metrics", convert(*native));
+    }
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TitleBarMetrics {
@@ -46,12 +90,14 @@ pub struct TitleBarMetrics {
 
 type ConfigureFn = unsafe extern "C" fn(isize, i32, *mut NativeMetrics) -> i32;
 type MetricsFn = unsafe extern "C" fn(isize, *mut NativeMetrics) -> i32;
+type SetRuntimeIconsFn = unsafe extern "C" fn(isize, isize, isize, *const u16) -> i32;
 
 struct Bridge {
     _module: usize,
     enable: ConfigureFn,
     update: ConfigureFn,
     metrics: MetricsFn,
+    set_runtime_icons: SetRuntimeIconsFn,
 }
 
 unsafe impl Send for Bridge {}
@@ -90,6 +136,7 @@ fn load_bridge() -> Result<Bridge, String> {
         enable: unsafe { symbol(module, b"verenu_enable_extended_titlebar\0")? },
         update: unsafe { symbol(module, b"verenu_update_extended_titlebar\0")? },
         metrics: unsafe { symbol(module, b"verenu_get_extended_titlebar_metrics\0")? },
+        set_runtime_icons: unsafe { symbol(module, b"verenu_set_runtime_icons\0")? },
     })
 }
 
@@ -134,6 +181,9 @@ pub fn enable(window: &WebviewWindow, theme: Option<Theme>) -> Result<TitleBarMe
     }
     let metrics = convert(native);
     log::info!("Windows extended title bar enabled: hwnd=0x{hwnd:X}, window={:?}, client={:?}, client_origin={:?}, height={}px, insets=({}, {}), scale={}, maximized={}", metrics.window_rect, metrics.client_rect, metrics.client_origin, metrics.height, metrics.left_inset, metrics.right_inset, metrics.scale_factor, metrics.is_maximized);
+    if let Ok(mut guard) = LAST_EMITTED.get_or_init(|| Mutex::new(None)).lock() {
+        *guard = Some(native);
+    }
     window
         .emit("verenu:native-titlebar-metrics", &metrics)
         .map_err(|e| e.to_string())?;
@@ -146,8 +196,31 @@ pub fn refresh(window: &WebviewWindow, theme: Option<Theme>) {
     if let Ok(bridge) = bridge() {
         let hr = unsafe { (bridge.update)(hwnd.0 as isize, i32::from(dark(theme)), &mut native) };
         if hr >= 0 {
-            let _ = window.emit("verenu:native-titlebar-metrics", convert(native));
+            emit_if_changed(window, &native);
         }
+    }
+}
+
+pub fn set_runtime_icons(
+    hwnd: isize,
+    taskbar_icon: isize,
+    titlebar_icon: isize,
+    taskbar_icon_path: &std::path::Path,
+) -> Result<(), String> {
+    let path: Vec<u16> = taskbar_icon_path
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let hr =
+        unsafe { (bridge()?.set_runtime_icons)(hwnd, taskbar_icon, titlebar_icon, path.as_ptr()) };
+    if hr < 0 {
+        Err(format!(
+            "AppWindow icon update failed with HRESULT 0x{:08X}",
+            hr as u32
+        ))
+    } else {
+        Ok(())
     }
 }
 
@@ -163,5 +236,61 @@ pub fn get_native_titlebar_metrics(window: WebviewWindow) -> Result<TitleBarMetr
         ))
     } else {
         Ok(convert(native))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NativeMetrics;
+
+    fn metrics() -> NativeMetrics {
+        let mut m = NativeMetrics::default();
+        m.titlebar_height = 32;
+        m.left_inset = 10;
+        m.right_inset = 140;
+        m.dpi = 144;
+        m.window_left = 100;
+        m.window_top = 100;
+        m.window_right = 1400;
+        m.window_bottom = 900;
+        m.client_screen_x = 100;
+        m.client_screen_y = 132;
+        m
+    }
+
+    #[test]
+    fn position_and_size_changes_do_not_count_as_relevant() {
+        let mut moved = metrics();
+        moved.window_left += 300;
+        moved.window_top += 200;
+        moved.client_screen_x += 300;
+        moved.client_screen_y += 200;
+        // A resize also shifts the rect edges without touching the chrome.
+        moved.window_right += 150;
+        moved.window_bottom += 100;
+        assert!(metrics().frontend_relevant_eq(&moved));
+    }
+
+    #[test]
+    fn chrome_changes_count_as_relevant() {
+        let base = metrics();
+        for mutated in [
+            NativeMetrics {
+                titlebar_height: 40,
+                ..base
+            },
+            NativeMetrics { left_inset: 0, ..base },
+            NativeMetrics {
+                right_inset: 100,
+                ..base
+            },
+            NativeMetrics { dpi: 96, ..base },
+            NativeMetrics {
+                is_maximized: 1,
+                ..base
+            },
+        ] {
+            assert!(!base.frontend_relevant_eq(&mutated));
+        }
     }
 }

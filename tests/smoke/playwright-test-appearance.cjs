@@ -54,12 +54,18 @@ const TIMEOUT = 8_000;
     await page.locator('.settings-back').click({ timeout: TIMEOUT });
     await page.locator('.settings-page').waitFor({ state: 'hidden', timeout: 3_000 });
 
-    for (const label of ['Home', 'Insights', 'Contexts', 'Style']) {
+    for (const label of ['Home', 'Insights', 'Style']) {
       const btn = page.locator(`.nav-item:has-text("${label}")`);
       await btn.waitFor({ state: 'visible', timeout: TIMEOUT });
       await btn.click();
       await page.locator('html[data-theme="dark"]').waitFor({ state: 'attached', timeout: TIMEOUT });
     }
+
+    // Contexts are sidebar rows now, not a nav item — same check, new control.
+    const contextRow = page.locator('.ctx-row').first();
+    await contextRow.waitFor({ state: 'visible', timeout: TIMEOUT });
+    await contextRow.click();
+    await page.locator('html[data-theme="dark"]').waitFor({ state: 'attached', timeout: TIMEOUT });
 
     await page.reload({ waitUntil: 'networkidle', timeout: TIMEOUT });
     await page.locator('html[data-theme="dark"]').waitFor({ state: 'attached', timeout: TIMEOUT });

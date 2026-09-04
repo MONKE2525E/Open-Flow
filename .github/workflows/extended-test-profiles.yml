@@ -11,7 +11,7 @@ permissions:
 jobs:
   live-profile:
     name: Live profile
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     env:
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -39,38 +39,24 @@ jobs:
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Seed live test store
-        if: steps.live-secrets.outputs.enabled == 'true'
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          payload = {
-              "api_key_groq": os.environ.get("GROQ_API_KEY", "").strip(),
-              "api_key_openai": os.environ.get("OPENAI_API_KEY", "").strip(),
-              "api_key_google": os.environ.get("GOOGLE_API_KEY", "").strip(),
-          }
-          payload = {key: value for key, value in payload.items() if value}
-          target = Path.home() / "AppData" / "Roaming" / "com.verenu.app" / "settings.json"
-          target.parent.mkdir(parents=True, exist_ok=True)
-          target.write_text(json.dumps(payload), encoding="utf-8")
-          print(f"Seeded live test store at {target}")
-          PY
-
       - name: Skip live profile when secrets are absent
         if: steps.live-secrets.outputs.enabled != 'true'
         run: echo "Skipping live profile because no API secrets are configured."
 
       - name: Run live profile
         if: steps.live-secrets.outputs.enabled == 'true'
-        run: npm run test:live -- --json-report tests/live-profile.json
+        run: npm run test:live -- --json-report test-results/live-profile.json --junit-report test-results/live-profile.xml
+
+      - name: Upload live regression results
+        if: always() && steps.live-secrets.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-regression-results
+          path: test-results/
 
   native-profile:
     name: Native profile
-    runs-on: blacksmith-4vcpu-windows-2025
+    runs-on: windows-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -85,4 +71,11 @@ jobs:
         run: npm ci
 
       - name: Run native profile
-        run: npm run test:native -- --json-report tests/native-profile.json
+        run: npm run test:native -- --json-report test-results/native-profile.json --junit-report test-results/native-profile.xml
+
+      - name: Upload native regression results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-regression-results
+          path: test-results/

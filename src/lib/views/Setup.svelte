@@ -197,7 +197,7 @@
     const map: ProviderModelMap = {
       groq: ['whisper-large-v3-turbo', 'whisper-large-v3'],
       openai: ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe'],
-      google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
+      google: ['gemini-2.5-flash', 'gemini-3.5-transcribe'],
       assemblyai: [],
       local: ['parakeet-v3'],
     };
@@ -213,9 +213,9 @@
 
   function cleanupModelsByProvider(...selected: string[]): ProviderModelMap {
     const map: ProviderModelMap = {
-      groq: ['qwen/qwen3.6-27b', 'openai/gpt-oss-20b'],
+      groq: ['qwen/qwen3.6-27b'],
       openai: ['gpt-4o-mini', 'gpt-4o'],
-      google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
+      google: ['gemini-3.5-flash-lite'],
       assemblyai: [],
       local: ['qwen2.5-3b-instruct'],
     };
@@ -238,14 +238,14 @@
       : provider === 'openai'
         ? 'openai/gpt-4o-transcribe'
         : provider === 'google'
-          ? 'google/gemini-3.5-flash'
+          ? 'google/gemini-3.5-transcribe'
           : 'groq/whisper-large-v3-turbo';
     const providerDefaultCleanup = provider === 'local'
       ? 'local/qwen2.5-3b-instruct'
       : provider === 'openai'
         ? 'openai/gpt-4o-mini'
         : provider === 'google'
-          ? 'google/gemini-3.5-flash'
+        ? 'google/gemini-3.5-flash-lite'
           : 'groq/qwen/qwen3.6-27b';
 
     // The Models step is the more specific answer, so its target wins over the
@@ -287,8 +287,7 @@
         // The wizard no longer asks about these one by one; they are the
         // recommended defaults and are disclosed on the Done screen.
         () => saveSetting('noise_reduction', true),
-        () => saveSetting('contextual_caps_enabled', true),
-        () => saveSetting('auto_spacing_enabled', true),
+        () => saveSetting('contextual_formatting_enabled', true),
         () => saveSetting('caps_lock_uppercase_enabled', true),
         () => saveSetting('app_context_hint', true),
         () => saveSetting('auto_learn_enabled', true),

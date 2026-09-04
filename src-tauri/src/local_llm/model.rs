@@ -403,7 +403,8 @@ mod tests {
                     hash.len()
                 );
                 assert!(
-                    hash.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+                    hash.chars()
+                        .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
                     "{} artifact {} sha256 is not lowercase hex: {hash}",
                     manifest.id,
                     artifact.filename

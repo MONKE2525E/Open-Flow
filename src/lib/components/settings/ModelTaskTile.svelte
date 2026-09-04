@@ -1,232 +1,377 @@
 <script lang="ts">
-  import { slide } from 'svelte/transition';
+  import { openCleanupPromptEditor, cleanupPromptStore } from '../../stores.svelte';
+  import { fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
-  import { cleanupPromptOverridesStore, openCleanupPromptEditor } from '../../stores.svelte';
   import { MOTION_MS, motionMs } from '../../motion';
-  import type { ProviderId, ProviderModelMap } from '../../settings';
+  import { getProviderLogo, getProviderPlate } from '../../setup/ProviderLogos';
+  import type { ProviderId } from '../../settings';
   import {
-    modelDisplayLabel,
-    modelId,
     providerDisplayLabel,
-    providerSections,
-    recommendedModels,
+    qualifiedModelLabel,
     splitModelId,
     taskLabel,
     type TaskType,
-    type UiProviderId,
   } from './models';
-  import ModelProviderGroup from './ModelProviderGroup.svelte';
-  import LocalModelGroup from './LocalModelGroup.svelte';
+  import {
+    rowForSelection,
+    unavailableMessages,
+    type LocalControls,
+    type PickerContext,
+  } from './modelStates';
+  import ModelPickerModal from './ModelPickerModal.svelte';
 
   let {
     type,
-    opened,
     advancedModelUi,
     apiKeyStatus,
-    modelsByProvider,
+    context,
     defaultModel,
     fallbackModels,
-    customDrafts,
-    onToggleOpen,
-    onToggleModel,
-    onRemoveCustomModel,
+    customDraft,
+    onSelectModel,
+    onAddFallback,
+    onRemoveFallback,
+    onMoveFallback,
     onCustomDraftChange,
     onAddCustomModel,
-    onManageLocalModels,
-    localModels = [],
+    onOpenApiKeys,
+    local,
   }: {
     type: TaskType;
-    opened: boolean;
     advancedModelUi: boolean;
     apiKeyStatus: Record<ProviderId, boolean>;
-    modelsByProvider: ProviderModelMap;
+    context: PickerContext;
     defaultModel: string;
     fallbackModels: string[];
-    customDrafts: Record<UiProviderId, string>;
-    onToggleOpen: (type: TaskType) => void;
-    onToggleModel: (type: TaskType, provider: ProviderId, modelName: string) => void;
-    onRemoveCustomModel: (type: TaskType, provider: ProviderId, modelName: string) => void;
-    onCustomDraftChange: (type: TaskType, provider: UiProviderId, value: string) => void;
-    onAddCustomModel: (type: TaskType, provider: ProviderId, modelName: string) => void;
-    onManageLocalModels?: () => void;
-    localModels?: Array<{ id: string; is_downloaded?: boolean }>;
+    customDraft: string;
+    onSelectModel: (type: TaskType, id: string) => void;
+    onAddFallback: (type: TaskType, id: string) => void;
+    onRemoveFallback: (type: TaskType, id: string) => void;
+    onMoveFallback: (type: TaskType, id: string, delta: -1 | 1) => void;
+    onCustomDraftChange: (type: TaskType, value: string) => void;
+    onAddCustomModel: (type: TaskType, id: string) => void;
+    onOpenApiKeys: () => void;
+    local: LocalControls;
   } = $props();
 
-  const fallbackCount = $derived(fallbackModels.length);
+  let picker = $state<'select' | 'fallback' | null>(null);
+  /** Centre of whichever button opened the dialog, so it grows out of it. */
+  let pickerOrigin = $state<{ x: number; y: number } | null>(null);
 
-  function missingKeyWarning(): string {
-    const missing = [defaultModel, ...fallbackModels]
+  function openPicker(mode: 'select' | 'fallback', event: MouseEvent) {
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    pickerOrigin = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    picker = mode;
+  }
+
+  const parsedDefault = $derived(splitModelId(defaultModel));
+  const activeRow = $derived(rowForSelection(defaultModel, context));
+
+  const missingKeys = $derived(
+    [defaultModel, ...fallbackModels]
       .map((id) => splitModelId(id)?.provider)
       .filter((provider): provider is ProviderId => !!provider)
       .filter((provider) => provider !== 'local')
       .filter((provider, index, all) => all.indexOf(provider) === index)
-      .filter((provider) => !apiKeyStatus[provider]);
+      .filter((provider) => !apiKeyStatus[provider]),
+  );
 
-    return missing.length
-      ? `Missing API keys for: ${missing.map((provider) => providerDisplayLabel(provider)).join(', ')}`
-      : '';
+  const warnings = $derived([
+    ...(missingKeys.length
+      ? [`Missing API keys for: ${missingKeys.map(providerDisplayLabel).join(', ')}`]
+      : []),
+    ...unavailableMessages(type, defaultModel, fallbackModels, context),
+  ]);
+
+  const promptCustomized = $derived(!!cleanupPromptStore.override.trim());
+
+  function chipLabel(id: string): string {
+    const parsed = splitModelId(id);
+    return parsed ? qualifiedModelLabel(parsed.provider, parsed.model) : id;
   }
-
-  function activeProviderLabel(): string {
-    const parsed = splitModelId(defaultModel);
-    return parsed ? providerDisplayLabel(parsed.provider) : 'None';
-  }
-
-  function activeModelLabel(): string {
-    const parsed = splitModelId(defaultModel);
-    return parsed ? modelDisplayLabel(parsed.provider, parsed.model) : 'None';
-  }
-
-  function currentCleanupModelFor(provider: ProviderId): string {
-    const parsed = splitModelId(defaultModel);
-    if (parsed && parsed.provider === provider) return parsed.model;
-    // Safe: only ever called for a section pre-filtered to cleanup-capable providers.
-    return recommendedModels.cleanup[provider as UiProviderId]!.premium;
-  }
-
-  const cloudSections = $derived(providerSections.filter((section) => section.tasks.includes(type)));
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<!-- Escape collapses the open tile no matter which control inside it has
-     focus, so the key backs out one layer at a time (tile → Settings).
-     preventDefault marks the key as handled for Settings' window guard. -->
-<div class="task-tile" class:task-open={opened} onkeydown={(event) => { if (event.key === 'Escape' && opened) { event.preventDefault(); onToggleOpen(type); } }}>
-  <button class="tile-head" onclick={() => onToggleOpen(type)} aria-expanded={opened}>
-    <div class="head-left">
-      <span class="head-title">{taskLabel(type)}</span>
-      <div class="summary-row">
-        <span class="summary-item provider-chip">{activeProviderLabel()}</span>
-        <span class="summary-item model-chip">{activeModelLabel()}</span>
-        {#if fallbackCount > 0}
-          <span class="summary-item fallback-chip">{fallbackCount} fallback{fallbackCount !== 1 ? 's' : ''}</span>
-        {/if}
-      </div>
-    </div>
-    <span class="chevron" class:chevron-open={opened} aria-hidden="true"></span>
-  </button>
-
-  {#if opened}
-    <div class="tile-inner" transition:slide={{ duration: motionMs(MOTION_MS.base), easing: cubicOut }}>
-      {#if missingKeyWarning()}
-        <div class="warn-banner">{missingKeyWarning()}</div>
+<section class="task-tile" data-setting-target={`models-${type}`}>
+  <header class="tile-head">
+    <span class="head-title">{taskLabel(type)}</span>
+    <div class="head-actions">
+      {#if type === 'cleanup' && advancedModelUi && parsedDefault}
+        <button
+          class="tile-btn"
+          type="button"
+          onclick={(event) =>
+            openCleanupPromptEditor(
+              parsedDefault.provider,
+              parsedDefault.model,
+              (event.currentTarget as HTMLButtonElement).getBoundingClientRect(),
+            )}
+        >
+          Edit prompt{promptCustomized ? ' •' : ''}
+        </button>
       {/if}
-
-      <div class="model-container">
-        {#each cloudSections as section (section.id)}
-          <ModelProviderGroup
-            {type}
-            {section}
-            {advancedModelUi}
-            hasKey={apiKeyStatus[section.storeProvider]}
-            models={modelsByProvider[section.storeProvider] ?? []}
-            {defaultModel}
-            {fallbackModels}
-            customDraft={customDrafts[section.id]}
-            {onToggleModel}
-            {onRemoveCustomModel}
-            {onCustomDraftChange}
-            {onAddCustomModel}
-          />
-        {/each}
-        {#if type === 'transcription'}
-          <LocalModelGroup
-            {type}
-            models={localModels}
-            {defaultModel}
-            {fallbackModels}
-            emptyLabel="No local transcription models installed yet"
-            {onToggleModel}
-            onManageLocalModels={onManageLocalModels ?? (() => {})}
-          />
-        {:else if type === 'cleanup'}
-          <LocalModelGroup
-            {type}
-            models={localModels}
-            {defaultModel}
-            {fallbackModels}
-            emptyLabel="No local cleanup models installed yet"
-            {onToggleModel}
-            onManageLocalModels={onManageLocalModels ?? (() => {})}
-          />
-        {/if}
-      </div>
-
-      {#if type === 'cleanup' && advancedModelUi}
-        <div class="prompt-editor-section" transition:slide={{ duration: motionMs(MOTION_MS.base), easing: cubicOut }}>
-          {#each cloudSections as section (section.id)}
-            {@const model = currentCleanupModelFor(section.storeProvider)}
-            {@const key = modelId(section.storeProvider, model)}
-            {@const isCustomized = !!cleanupPromptOverridesStore.overrides[key]?.trim()}
-            <div class="prompt-edit-row">
-              <div class="prompt-edit-meta">
-                <span class="prompt-editor-provider">{section.label}</span>
-                <span class="prompt-editor-model">{model}</span>
-              </div>
-              <div class="prompt-edit-right">
-                {#if isCustomized}
-                  <span class="prompt-customized-badge">Customized</span>
-                {/if}
-                <button
-                  class="prompt-edit-btn"
-                  type="button"
-                  onclick={(event) => openCleanupPromptEditor(section.storeProvider, model, (event.currentTarget as HTMLButtonElement).getBoundingClientRect())}
-                >Edit prompt</button>
-              </div>
-            </div>
-          {/each}
-        </div>
-      {/if}
+      <button
+        class="tile-btn tile-btn-primary"
+        type="button"
+        onclick={(event) => openPicker('select', event)}
+      >
+        Change model
+      </button>
     </div>
-  {/if}
-</div>
+  </header>
+
+  <div class="active-row">
+    {#if parsedDefault && activeRow}
+      <span
+        class="active-logo"
+        class:plate-bleed={getProviderPlate(parsedDefault.provider, parsedDefault.model) === 'bleed'}
+      >
+        {@html getProviderLogo(parsedDefault.provider, parsedDefault.model)}
+      </span>
+      <span class="active-text">
+        <span class="active-name">{activeRow.label}</span>
+        <span class="summary-row">
+          <span class="summary-item provider-chip">{providerDisplayLabel(parsedDefault.provider)}</span>
+          <span class="summary-item model-chip">{parsedDefault.model}</span>
+          {#if fallbackModels.length > 0}
+            <span class="summary-item fallback-chip">
+              {fallbackModels.length} fallback{fallbackModels.length !== 1 ? 's' : ''}
+            </span>
+          {/if}
+        </span>
+      </span>
+    {:else}
+      <span class="active-text">
+        <span class="active-name active-none">No model selected</span>
+        <span class="summary-row">
+          <span class="summary-item provider-chip">None</span>
+          <span class="summary-item model-chip">None</span>
+        </span>
+      </span>
+    {/if}
+  </div>
+
+  {#each warnings as warning (warning)}
+    <p class="warn-banner">{warning}</p>
+  {/each}
+
+  <div class="fallback-block">
+    <p class="fallback-label">
+      Fallbacks
+      <span>tried in order if the model above can’t run</span>
+    </p>
+
+    <ul class="fallback-list">
+      {#each fallbackModels as id, index (id)}
+        {@const parsed = splitModelId(id)}
+        <li
+          class="fallback-chip-item"
+          in:fly={{ y: -6, duration: motionMs(MOTION_MS.base), easing: cubicOut }}
+          out:fly={{ y: -6, duration: motionMs(MOTION_MS.fast), easing: cubicOut }}
+        >
+          <span class="chip-index">{index + 1}</span>
+          {#if parsed}
+            <span
+              class="chip-logo"
+              class:plate-bleed={getProviderPlate(parsed.provider, parsed.model) === 'bleed'}
+            >
+              {@html getProviderLogo(parsed.provider, parsed.model)}
+            </span>
+          {/if}
+          <span class="chip-name">{chipLabel(id)}</span>
+          <span class="chip-controls">
+            <button
+              class="chip-btn"
+              type="button"
+              disabled={index === 0}
+              aria-label="Move {chipLabel(id)} earlier"
+              onclick={() => onMoveFallback(type, id, -1)}>↑</button
+            >
+            <button
+              class="chip-btn"
+              type="button"
+              disabled={index === fallbackModels.length - 1}
+              aria-label="Move {chipLabel(id)} later"
+              onclick={() => onMoveFallback(type, id, 1)}>↓</button
+            >
+            <button
+              class="chip-btn chip-remove"
+              type="button"
+              aria-label="Remove {chipLabel(id)} from the fallback chain"
+              onclick={() => onRemoveFallback(type, id)}>×</button
+            >
+          </span>
+        </li>
+      {:else}
+        <li class="fallback-empty">None — this task fails if the model above can’t run.</li>
+      {/each}
+    </ul>
+
+    <button class="add-fallback" type="button" onclick={(event) => openPicker('fallback', event)}>
+      + Add fallback
+    </button>
+  </div>
+</section>
+
+{#if picker}
+  <ModelPickerModal
+    mode={picker}
+    origin={pickerOrigin}
+    task={type}
+    {context}
+    {defaultModel}
+    {fallbackModels}
+    {advancedModelUi}
+    {customDraft}
+    onSelect={(id) => onSelectModel(type, id)}
+    onAddFallback={(id) => onAddFallback(type, id)}
+    onCustomDraftChange={(value) => onCustomDraftChange(type, value)}
+    onAddCustomModel={(id) => onAddCustomModel(type, id)}
+    {local}
+    onOpenApiKeys={() => {
+      picker = null;
+      onOpenApiKeys();
+    }}
+    onClose={() => (picker = null)}
+  />
+{/if}
 
 <style>
-  /* ── Task tile ───────────────────────────── */
+  /* Card, so the advanced area reads as part of the same system as the preset
+     cards above it rather than loose text on the page background. */
   .task-tile {
-    border-top: 1px solid var(--line);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg, 12px);
+    background: var(--bg-elev);
+    padding: 16px 18px 14px;
+    margin-bottom: 12px;
   }
 
-  /* ── Tile header ─────────────────────────── */
   .tile-head {
-    width: 100%;
-    border: none;
-    outline: none;
-    background: transparent;
-    padding: 13px 10px 13px 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    cursor: pointer;
-    text-align: left;
-    transition: background 160ms ease;
-    user-select: none;
-  }
-
-  .tile-head:hover {
-    background: color-mix(in srgb, var(--paper) 30%, transparent);
-  }
-
-  .head-left {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-    min-width: 0;
+    margin-bottom: 12px;
   }
 
   .head-title {
-    font-family: var(--serif);
-    font-size: 16px;
-    font-weight: 500;
+    font-family: var(--sans);
+    font-size: 15px;
+    font-weight: 600;
     color: var(--ink);
     line-height: 1;
   }
 
-  /* Plain inline text, not pills — the current selection reads as a quiet
-     "Provider · model · N fallbacks" summary line. The classes and text stay
-     (a frozen smoke test reads the fallback count off .summary-item), only the
-     badge styling is gone. */
+  .head-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .tile-btn {
+    font-family: var(--sans);
+    font-size: 11.5px;
+    font-weight: 500;
+    padding: 5px 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: 7px;
+    background: transparent;
+    color: var(--ink-soft);
+    cursor: pointer;
+    transition: background 0.14s, color 0.14s;
+    white-space: nowrap;
+  }
+
+  .tile-btn:hover {
+    background: var(--control-hover);
+    color: var(--ink);
+  }
+
+  .tile-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .tile-btn-primary {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+    color: var(--accent-ink);
+  }
+
+  /* ── Active model ───────────────────────── */
+  .active-row {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--paper);
+  }
+
+  /* Marks are shown as each brand draws them — a logo carrying its own
+     background fills the tile, the rest sit bare at true colour. */
+  .active-logo,
+  .chip-logo {
+    flex-shrink: 0;
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+    overflow: hidden;
+    color: var(--ink-soft);
+  }
+
+  .active-logo {
+    width: 30px;
+    height: 30px;
+  }
+
+  .active-logo :global(svg) {
+    width: 21px;
+    height: 21px;
+  }
+
+  .chip-logo {
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+  }
+
+  .chip-logo :global(svg) {
+    width: 13px;
+    height: 13px;
+  }
+
+  .plate-bleed :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+
+  .active-text {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .active-name {
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .active-none {
+    color: var(--ink-mute);
+  }
+
+  /* Plain inline text, not pills — the selection reads as a quiet
+     "Provider · model · N fallbacks" line. A frozen smoke test reads the
+     fallback count off .summary-item, so the order stays fixed. */
   .summary-row {
     display: flex;
     align-items: baseline;
@@ -235,9 +380,8 @@
   }
 
   .summary-item {
-    font-size: 11.5px;
+    font-size: 11px;
     font-family: var(--sans);
-    font-weight: 450;
     color: var(--ink-mute);
     white-space: nowrap;
   }
@@ -250,72 +394,18 @@
 
   .provider-chip {
     color: var(--ink-soft);
-    font-weight: 500;
   }
 
   .model-chip {
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: 10.5px;
   }
 
-  .chevron {
-    width: 8px;
-    height: 8px;
-    flex-shrink: 0;
-    border-right: 2px solid var(--ink-mute);
-    border-bottom: 2px solid var(--ink-mute);
-    transform: rotate(45deg);
-    transition: transform 220ms ease;
-  }
-
-  .chevron-open {
-    transform: rotate(225deg);
-  }
-
-  /* ── Tile body ───────────────────────────── */
-  .tile-inner {
-    padding: 0 0 14px;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .tile-inner:has(.prompt-editor-section) {
-    padding-bottom: 0;
-  }
-
-  .tile-inner .warn-banner {
-    margin: 10px 0 8px;
-  }
-
-  /* ── Model container ─────────────────────── */
-  .model-container {
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    overflow: hidden;
-  }
-
-  /* Gradient divider between provider groups. Each .simple-group is a
-     separate <ModelProviderGroup> instance, so the adjacent-sibling rule
-     must live here on the scoped container with the inner part global. */
-  .model-container :global(.simple-group + .simple-group::before) {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 5%;
-    right: 5%;
-    height: 1px;
-    background: linear-gradient(
-      to right,
-      transparent,
-      var(--line-strong) 30%,
-      var(--line-strong) 70%,
-      transparent
-    );
-  }
-
-  /* ── Warning ─────────────────────────────── */
+  /* ── Warnings ───────────────────────────── */
   .warn-banner {
+    margin: 10px 0 0;
     font-size: 12px;
+    line-height: 1.45;
     color: var(--danger);
     background: var(--danger-bg);
     border: 1px solid var(--danger-line);
@@ -323,89 +413,136 @@
     padding: 8px 10px;
   }
 
-  /* ── Prompt editor (compact rows) ───────────────────────── */
-  .prompt-editor-section {
+  /* ── Fallback chain ─────────────────────── */
+  .fallback-block {
+    margin-top: 12px;
+  }
+
+  .fallback-label {
+    margin: 0 0 6px;
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--ink-faint);
+  }
+
+  .fallback-label span {
+    margin-left: 8px;
+    font-weight: 450;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 11px;
+  }
+
+  .fallback-list {
+    list-style: none;
+    margin: 0 0 6px;
+    padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 8px 0;
   }
 
-  .prompt-edit-row {
+  .fallback-chip-item {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 7px 10px;
-    border-radius: 8px;
-    transition: background 0.14s;
+    gap: 9px;
+    padding: 5px 8px;
+    border-radius: 7px;
+    font-family: var(--sans);
+    font-size: 12px;
+    color: var(--ink-soft);
   }
 
-  .prompt-edit-row:hover {
+  .fallback-chip-item:hover {
     background: var(--control-hover);
   }
 
-  .prompt-edit-meta {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
+  .chip-index {
+    width: 12px;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    color: var(--ink-faint);
+  }
+
+  .chip-name {
+    flex: 1;
     min-width: 0;
-  }
-
-  .prompt-editor-provider {
-    font-size: 12px;
-    font-family: var(--sans);
-    font-weight: 600;
-    color: var(--ink);
-  }
-
-  .prompt-editor-model {
-    font-family: var(--mono);
-    font-size: 10px;
-    color: var(--ink-mute);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .prompt-edit-right {
+  .chip-controls {
     display: flex;
-    align-items: center;
-    gap: 6px;
+    gap: 1px;
     flex-shrink: 0;
   }
 
-  .prompt-customized-badge {
-    font-family: var(--sans);
-    font-size: 10px;
-    font-weight: 500;
-    padding: 2px 7px;
-    border-radius: 20px;
-    background: var(--accent-soft);
-    color: var(--accent-ink);
-    white-space: nowrap;
-  }
-
-  .prompt-edit-btn {
-    font-family: var(--sans);
-    font-size: 11.5px;
-    font-weight: 500;
-    padding: 4px 11px;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
+  .chip-btn {
+    width: 20px;
+    height: 20px;
+    border: none;
     background: transparent;
-    color: var(--ink-soft);
+    color: var(--ink-faint);
+    font-size: 11px;
+    line-height: 1;
     cursor: pointer;
-    transition: background 0.14s, color 0.14s;
-    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 0.14s, color 0.14s;
   }
 
-  .prompt-edit-btn:hover {
-    background: var(--bg-elev);
+  /* Keyboard users never hover, so focus has to reveal them too. */
+  .fallback-chip-item:hover .chip-btn,
+  .chip-btn:focus-visible {
+    opacity: 1;
+  }
+
+  .chip-btn:hover:not(:disabled) {
     color: var(--ink);
   }
 
-  .prompt-edit-btn:focus-visible {
+  .chip-btn:disabled {
+    opacity: 0;
+    cursor: default;
+  }
+
+  .fallback-chip-item:hover .chip-btn:disabled {
+    opacity: 0.25;
+  }
+
+  .chip-remove:hover {
+    color: var(--danger);
+  }
+
+  .fallback-empty {
+    padding: 5px 8px;
+    font-family: var(--sans);
+    font-size: 12px;
+    color: var(--ink-faint);
+  }
+
+  .add-fallback {
+    font-family: var(--sans);
+    font-size: 11.5px;
+    font-weight: 500;
+    padding: 4px 8px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--ink-mute);
+    cursor: pointer;
+    transition: background 0.14s, color 0.14s;
+  }
+
+  .add-fallback:hover {
+    background: var(--control-hover);
+    color: var(--ink);
+  }
+
+  .add-fallback:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 1px;
   }

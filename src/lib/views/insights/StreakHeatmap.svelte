@@ -98,11 +98,26 @@
 
   onMount(() => {
     if (!gridHost) return;
-    const update = () => { availableWidth = gridHost?.clientWidth ?? 640; };
+    // A window drag can deliver several ResizeObserver notifications before
+    // the next frame; writing Svelte state in each one would run the whole
+    // reactive pass (and any DOM patch) multiple times per frame. Coalesce
+    // into a single update per animation frame instead.
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      if (gridHost) availableWidth = gridHost.clientWidth;
+    };
+    const schedule = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(update);
+    };
     update();
-    const observer = new ResizeObserver(update);
+    const observer = new ResizeObserver(schedule);
     observer.observe(gridHost);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+    };
   });
 
   /* One label per month the grid spans, positioned above that month's first
@@ -304,7 +319,8 @@
     </ChartTooltip>
   {/if}
 
-  <table class="sr-only">
+  <div class="sr-only">
+  <table>
     <caption>Words dictated per day</caption>
     <thead><tr><th scope="col">Day</th><th scope="col">Words</th></tr></thead>
     <tbody>
@@ -313,6 +329,7 @@
       {/each}
     </tbody>
   </table>
+  </div>
 </section>
 
 <style>
@@ -324,17 +341,17 @@
   .best { text-align: right; }
   .best-num {
     display: block;
-    font-family: var(--serif);
-    font-size: 20px;
-    font-weight: 500;
+    font-family: var(--sans);
+    font-size: 19px;
+    font-weight: 600;
     color: var(--ink);
     line-height: 1.1;
     font-variant-numeric: tabular-nums;
   }
   .best-label {
     font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     color: var(--ink-mute);
   }
 
@@ -445,8 +462,12 @@
   .legend-label-more { margin-left: 3px; }
   .legend-gap { width: 10px; }
 
-  /* Stacked, the rail's vertical rule becomes a horizontal one. */
-  @media (max-width: 900px) {
+  /* Stacked, the rail's vertical rule becomes a horizontal one.
+     Container query against the insights column (owned by Insights.svelte):
+     viewport queries fired too late because the sidebar consumes ~220px.
+     Kept at 540px so calendar + rail stay side by side through the same
+     widths where the hero band stays 3-up. */
+  @container insights (max-width: 540px) {
     .heat-layout { flex-direction: column; }
     .heat-side {
       flex: 1 1 auto;
@@ -480,8 +501,8 @@
   }
   .stat-label {
     font-size: 10px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     color: var(--ink-mute);
   }
   .stat-value {
@@ -497,6 +518,9 @@
     line-height: 1.35;
   }
 
+  /* Must wrap the table rather than be the table: width/height:1px are only a
+     *minimum* on a table box, so an .sr-only <table> keeps its full content
+     height (thousands of px here) and inflates the page's scroll height. */
   .sr-only {
     position: absolute;
     width: 1px;

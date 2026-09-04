@@ -174,10 +174,20 @@
 
 .ui-dropdown-trigger svg {
   flex: 0 0 auto;
+}
+
+/*
+ * Only the chevron flips. This targets the trailing direct child rather than
+ * every descendant svg, so a trigger that also carries a leading icon (the
+ * Insights context picker shows the context's own glyph) doesn't turn that
+ * icon upside down along with the chevron. Every trigger in the app puts its
+ * chevron last, which is what makes :last-child the right anchor.
+ */
+.ui-dropdown-trigger > svg:last-child {
   transition: transform var(--ui-duration-fast) var(--ui-ease-out);
 }
 
-.ui-dropdown-trigger[aria-expanded='true'] svg {
+.ui-dropdown-trigger[aria-expanded='true'] > svg:last-child {
   transform: rotate(180deg);
 }
 
@@ -224,8 +234,8 @@
 
 :where(button).ui-dropdown-option.active,
 :where(button).ui-dropdown-option.is-active {
-  background: var(--accent-soft);
-  color: var(--accent-ink);
+  background: var(--control-active);
+  color: var(--ink);
   font-weight: 500;
 }
 
@@ -352,6 +362,14 @@ input[type='range'].ui-range:focus-visible {
   z-index: 50;
 }
 
+/* A backdrop fills the viewport, so the browser's default button outline
+   looks like a border around the entire app. Dialog controls own the visible
+   keyboard focus treatment instead. */
+.ui-modal-backdrop:focus,
+.modal-backdrop:focus {
+  outline: none;
+}
+
 .ui-modal-card,
 .modal-card {
   background: var(--bg-elev);
@@ -379,10 +397,10 @@ input[type='range'].ui-range:focus-visible {
 
 .ui-modal-title {
   color: var(--ink);
-  font-family: var(--serif);
-  font-size: 18px;
-  font-weight: 500;
-  letter-spacing: -0.015em;
+  font-family: var(--sans);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   margin: 0;
 }
 
@@ -413,5 +431,32 @@ input[type='range'].ui-range:focus-visible {
   :root {
     --ui-duration-fast: 80ms;
     --ui-duration-base: 120ms;
+  }
+}
+
+/* Provider marks that ship a light and a dark cut (OpenAI's is monochrome, so
+   one cut alone would vanish against its own background). getProviderLogo
+   emits both; exactly one must ever be visible. This lives here rather than in
+   a component because every logo consumer needs it — scoping it to the model
+   picker left the API Keys page drawing both marks on top of each other. */
+.mark-dark {
+  display: none;
+}
+
+[data-theme='dark'] .mark-light {
+  display: none;
+}
+
+[data-theme='dark'] .mark-dark {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .mark-light {
+    display: none;
+  }
+
+  :root:not([data-theme='light']) .mark-dark {
+    display: block;
   }
 }

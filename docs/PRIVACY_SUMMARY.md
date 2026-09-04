@@ -5,9 +5,9 @@ Verenu doesn't run its own servers, doesn't have an account system, and doesn't 
 ## What stays on your device
 
 - Your API keys (Windows Credential Manager / macOS Keychain)
-- Your settings, provider preferences, context groups, app mappings, and tone preferences
+- Your settings, provider preferences, context groups, targets, and tone preferences
 - Your transcription history
-- Your Dictionary entries, Snippets, and auto-learn data
+- Your context vocabulary, snippets, and Auto-learn data
 - Local logs, unless you explicitly export them
 
 ## What leaves your device
@@ -15,7 +15,7 @@ Verenu doesn't run its own servers, doesn't have an account system, and doesn't 
 - **Recorded audio** goes to the transcription provider you chose when you finish a dictation unless transcription is local
 - **Raw transcription text** goes to your chosen cleanup provider if cleanup is enabled
 - **Repair complaints and bounded dictation context** go to your configured AI provider only after you press Analyze in the repair pill
-- **Cleanup context** goes along with cleanup requests, including snippet instructions, cleanup settings, and model metadata
+- **Cleanup context** goes along with cleanup requests, including context instructions, cleanup settings, and model metadata
 - **Active app context** leaves your device only if you've enabled app-context hints
 - **Context website checks** send the domain you typed (nothing else) to DNS when you attach a website to a context group, to confirm it actually exists before saving it
 - **Update checks** request GitHub release metadata without sending dictated text, history, or keys
@@ -23,7 +23,7 @@ Verenu doesn't run its own servers, doesn't have an account system, and doesn't 
 
 ## One important caveat
 
-Once your audio or text reaches a third-party AI provider like Groq, OpenAI, or Google, that provider's own retention and privacy policies apply. Verenu has no control over what happens on their end.
+Once your audio or text reaches a third-party AI provider like Groq, OpenAI, Google, or AssemblyAI, that provider's own retention and privacy policies apply. Verenu has no control over what happens on their end.
 
 If you want the strictest local path today, use local transcription with `Cleanup: Off`. Local transcription with cloud cleanup still sends transcript text to the cleanup provider.
 

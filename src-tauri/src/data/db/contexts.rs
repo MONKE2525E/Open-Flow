@@ -22,6 +22,10 @@ pub struct Context {
     pub cleanup_intensity: Option<String>,
     pub color: Option<String>,
     pub custom_instructions: Option<String>,
+    pub contextual_formatting_disabled: bool,
+    /// `NULL` when unpinned. Pinned contexts sort newest-pin-first in the
+    /// sidebar; Everywhere is pinned implicitly by the UI and never sets this.
+    pub pinned_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -31,7 +35,40 @@ pub struct ContextTarget {
     pub id: i64,
     pub context_id: i64,
     pub executable: String,
+    /// The app identity captured when this target was assigned. These fields
+    /// let a target survive versioned/nightly app identifiers changing.
+    pub app_name: Option<String>,
+    pub developer: Option<String>,
+    /// `"windows"` / `"macos"`, or `None` for rows assigned before this field
+    /// existed (or synced from an unrecognized platform) — those stay visible
+    /// on every device rather than disappearing.
+    pub platform: Option<String>,
     pub created_at: String,
+}
+
+type ContextTargetRow = (
+    i64,
+    i64,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+/// Tag applied to a target assigned on this device, so a synced-in target
+/// from another OS (e.g. a Windows `.exe` name landing in a Mac's database)
+/// can be hidden from this device's UI without being deleted — going back to
+/// that OS should still see it. Executable naming already differs enough
+/// between platforms (`name.exe` vs `name.app`) that this never affects
+/// foreground-window matching, only which targets a device chooses to show.
+pub fn current_platform_tag() -> Option<&'static str> {
+    if cfg!(windows) {
+        Some("windows")
+    } else if cfg!(target_os = "macos") {
+        Some("macos")
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -52,8 +89,10 @@ fn context_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Context> {
         cleanup_intensity: row.get(5)?,
         color: row.get(6)?,
         custom_instructions: row.get(7)?,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
+        contextual_formatting_disabled: row.get::<_, i64>(8)? != 0,
+        pinned_at: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
     })
 }
 
@@ -119,9 +158,9 @@ pub fn everywhere_context_id(db: &Db) -> Result<i64> {
 pub fn query_contexts(db: &Db) -> Result<Vec<Context>> {
     let conn = lock_conn(db)?;
     let mut stmt = conn.prepare(
-        "SELECT id, name, is_everywhere, icon, tone, cleanup_intensity, color, custom_instructions, created_at, updated_at
+        "SELECT id, name, is_everywhere, icon, tone, cleanup_intensity, color, custom_instructions, contextual_formatting_disabled, pinned_at, created_at, updated_at
          FROM contexts
-         ORDER BY is_everywhere DESC, name COLLATE NOCASE ASC",
+         ORDER BY id ASC",
     )?;
     let rows = stmt
         .query_map([], context_from_row)?
@@ -136,7 +175,7 @@ pub fn query_context(db: &Db, context_id: i64) -> Result<Context> {
 
 fn query_context_conn(conn: &rusqlite::Connection, context_id: i64) -> Result<Context> {
     conn.query_row(
-        "SELECT id, name, is_everywhere, icon, tone, cleanup_intensity, color, custom_instructions, created_at, updated_at
+        "SELECT id, name, is_everywhere, icon, tone, cleanup_intensity, color, custom_instructions, contextual_formatting_disabled, pinned_at, created_at, updated_at
          FROM contexts WHERE id = ?1",
         params![context_id],
         context_from_row,
@@ -151,6 +190,7 @@ pub fn insert_context_returning(
     tone: Option<&str>,
     cleanup_intensity: Option<&str>,
     custom_instructions: Option<&str>,
+    contextual_formatting_disabled: bool,
 ) -> Result<Context> {
     let normalized_name = normalize_context_name(name)?;
     if normalized_name.eq_ignore_ascii_case("Everywhere") {
@@ -168,26 +208,26 @@ pub fn insert_context_returning(
         anyhow::bail!("You've reached the limit of {MAX_USER_CONTEXTS} context groups");
     }
     conn.execute(
-        "INSERT INTO contexts (name, is_everywhere, icon, tone, cleanup_intensity, custom_instructions) VALUES (?1, 0, ?2, ?3, ?4, ?5)",
+        "INSERT INTO contexts (name, is_everywhere, icon, tone, cleanup_intensity, custom_instructions, contextual_formatting_disabled) VALUES (?1, 0, ?2, ?3, ?4, ?5, ?6)",
         params![
             normalized_name,
             normalize_optional_trimmed(icon),
             normalize_optional_trimmed(tone),
             normalize_optional_trimmed(cleanup_intensity),
             normalized_custom_instructions,
+            contextual_formatting_disabled,
         ],
     )?;
     let id = conn.last_insert_rowid();
     query_context_conn(&conn, id)
 }
 
+/// Everywhere is editable like any other context — it is only undeletable.
+/// Renaming it does not change what it does: `is_everywhere` is the flag the
+/// pipeline resolves against, not the name.
 pub fn update_context(db: &Db, context_id: i64, name: &str) -> Result<()> {
     let normalized_name = normalize_context_name(name)?;
     let conn = lock_conn(db)?;
-    let context = query_context_conn(&conn, context_id)?;
-    if context.is_everywhere {
-        anyhow::bail!("The Everywhere context cannot be renamed");
-    }
     let changed = conn.execute(
         "UPDATE contexts SET name = ?2, updated_at = datetime('now') WHERE id = ?1",
         params![context_id, normalized_name],
@@ -205,21 +245,19 @@ pub fn update_context_settings(
     tone: Option<&str>,
     cleanup_intensity: Option<&str>,
     custom_instructions: Option<&str>,
+    contextual_formatting_disabled: bool,
 ) -> Result<()> {
     let normalized_custom_instructions = normalize_custom_instructions(custom_instructions)?;
     let conn = lock_conn(db)?;
-    let context = query_context_conn(&conn, context_id)?;
-    if context.is_everywhere {
-        anyhow::bail!("The Everywhere context cannot have a tone override");
-    }
     let changed = conn.execute(
-        "UPDATE contexts SET icon = ?2, tone = ?3, cleanup_intensity = ?4, custom_instructions = ?5, updated_at = datetime('now') WHERE id = ?1",
+        "UPDATE contexts SET icon = ?2, tone = ?3, cleanup_intensity = ?4, custom_instructions = ?5, contextual_formatting_disabled = ?6, updated_at = datetime('now') WHERE id = ?1",
         params![
             context_id,
             normalize_optional_trimmed(icon),
             normalize_optional_trimmed(tone),
             normalize_optional_trimmed(cleanup_intensity),
             normalized_custom_instructions,
+            contextual_formatting_disabled,
         ],
     )?;
     require_row_changed(changed, "Context", context_id)
@@ -231,10 +269,6 @@ pub fn update_context_settings(
 /// to change this one field.
 pub fn update_context_color(db: &Db, context_id: i64, color: Option<&str>) -> Result<()> {
     let conn = lock_conn(db)?;
-    let context = query_context_conn(&conn, context_id)?;
-    if context.is_everywhere {
-        anyhow::bail!("The Everywhere context cannot have a color override");
-    }
     let changed = conn.execute(
         "UPDATE contexts SET color = ?2, updated_at = datetime('now') WHERE id = ?1",
         params![context_id, normalize_optional_trimmed(color)],
@@ -242,14 +276,33 @@ pub fn update_context_color(db: &Db, context_id: i64, color: Option<&str>) -> Re
     require_row_changed(changed, "Context", context_id)
 }
 
+/// Pins or unpins a context. Pinning stamps `pinned_at` with the current time
+/// (re-pinning restamps, so the context becomes the newest pin); unpinning
+/// clears it and the context falls back into the creation-ordered list.
+/// Everywhere included — it is an ordinary row here.
+pub fn set_context_pinned(db: &Db, context_id: i64, pinned: bool) -> Result<()> {
+    let conn = lock_conn(db)?;
+    let changed = conn.execute(
+        "UPDATE contexts SET pinned_at = CASE WHEN ?2 THEN datetime('now') ELSE NULL END WHERE id = ?1",
+        params![context_id, pinned],
+    )?;
+    require_row_changed(changed, "Context", context_id)
+}
+
 pub fn delete_context(db: &Db, context_id: i64) -> Result<()> {
-    let mut conn = lock_conn(db)?;
+    let conn = lock_conn(db)?;
     let context = query_context_conn(&conn, context_id)?;
     if context.is_everywhere {
         anyhow::bail!("The Everywhere context cannot be deleted");
     }
+    delete_context_conn(&conn, context_id)
+}
 
-    let tx = conn.transaction()?;
+/// Connection-level delete used by both the command path and the LAN sync
+/// engine (which applies remote context deletions with identical semantics:
+/// scoped vocabulary moves to Everywhere so nothing is orphaned).
+pub fn delete_context_conn(conn: &Connection, context_id: i64) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
     let everywhere_id = ensure_everywhere_context_conn(&tx)?;
     tx.execute(
         "INSERT OR IGNORE INTO dictionary_contexts (context_id, dictionary_id)
@@ -283,29 +336,62 @@ pub fn delete_context(db: &Db, context_id: i64) -> Result<()> {
     Ok(())
 }
 
+fn context_target_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ContextTarget> {
+    Ok(ContextTarget {
+        id: row.get(0)?,
+        context_id: row.get(1)?,
+        executable: row.get(2)?,
+        app_name: row.get(3)?,
+        developer: row.get(4)?,
+        platform: row.get(5)?,
+        created_at: row.get(6)?,
+    })
+}
+
+/// Targets are shown when untagged (pre-v21 or from an unrecognized platform)
+/// or tagged for this device's own platform — see `current_platform_tag`.
+/// Rows still carrying the sync resolver's "?::" unresolved marker (no
+/// locally installed app came close enough to match) are excluded entirely
+/// rather than shown as a broken chip — a target from a context group that
+/// simply doesn't exist on this device should be invisible here, not a
+/// dead "(not found)" entry the user has to notice and clean up. The row
+/// itself stays in the database so a later sync (once a matching app is
+/// installed, or the row resolves on some other device) can still pick it
+/// up — see `sync::manager::reconcile_stale_context_targets`.
 pub fn query_context_targets(db: &Db, context_id: Option<i64>) -> Result<Vec<ContextTarget>> {
     let conn = lock_conn(db)?;
     let mut stmt = conn.prepare(
-        "SELECT id, context_id, executable, created_at
+        "SELECT id, context_id, executable, app_name, developer, platform, created_at
          FROM context_targets
          WHERE (?1 IS NULL OR context_id = ?1)
+           AND (?2 IS NULL OR platform IS NULL OR platform = ?2)
+           AND executable NOT LIKE '?::%'
          ORDER BY executable COLLATE NOCASE ASC",
     )?;
     let rows = stmt
-        .query_map(params![context_id], |row| {
-            Ok(ContextTarget {
-                id: row.get(0)?,
-                context_id: row.get(1)?,
-                executable: row.get(2)?,
-                created_at: row.get(3)?,
-            })
-        })?
+        .query_map(
+            params![context_id, current_platform_tag()],
+            context_target_from_row,
+        )?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
 }
 
+#[cfg(test)]
 pub fn assign_context_target(db: &Db, context_id: i64, executable: &str) -> Result<ContextTarget> {
+    assign_context_target_with_metadata(db, context_id, executable, None, None)
+}
+
+pub fn assign_context_target_with_metadata(
+    db: &Db,
+    context_id: i64,
+    executable: &str,
+    app_name: Option<&str>,
+    developer: Option<&str>,
+) -> Result<ContextTarget> {
     let normalized_executable = normalize_executable(executable)?;
+    let normalized_app_name = normalize_optional_trimmed(app_name);
+    let normalized_developer = normalize_optional_trimmed(developer);
     let mut conn = lock_conn(db)?;
     let context = query_context_conn(&conn, context_id)?;
     if context.is_everywhere {
@@ -314,25 +400,113 @@ pub fn assign_context_target(db: &Db, context_id: i64, executable: &str) -> Resu
 
     let tx = conn.transaction()?;
     tx.execute(
-        "INSERT INTO context_targets (context_id, executable) VALUES (?1, ?2)
-         ON CONFLICT(executable) DO UPDATE SET context_id = excluded.context_id",
-        params![context_id, normalized_executable],
+        "INSERT INTO context_targets (context_id, executable, app_name, developer, platform) VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(executable) DO UPDATE SET context_id = excluded.context_id, app_name = excluded.app_name, developer = excluded.developer, platform = excluded.platform",
+        params![
+            context_id,
+            normalized_executable,
+            normalized_app_name,
+            normalized_developer,
+            current_platform_tag()
+        ],
     )?;
     let target = tx.query_row(
-        "SELECT id, context_id, executable, created_at
+        "SELECT id, context_id, executable, app_name, developer, platform, created_at
          FROM context_targets WHERE executable = ?1",
         params![normalized_executable],
-        |row| {
-            Ok(ContextTarget {
-                id: row.get(0)?,
-                context_id: row.get(1)?,
-                executable: row.get(2)?,
-                created_at: row.get(3)?,
-            })
-        },
+        context_target_from_row,
     )?;
     tx.commit()?;
     Ok(target)
+}
+
+/// Rebinds a target whose old executable disappeared to a strong local app
+/// candidate. Exact executable matches refresh metadata; replacements require
+/// a close name and reject known developer mismatches. The unique executable
+/// constraint is respected: a candidate already owned by another context is
+/// left alone rather than silently stealing that assignment.
+pub fn reconcile_context_targets(
+    db: &Db,
+    installed_apps: &[crate::system::apps::InstalledApp],
+) -> Result<bool> {
+    let conn = lock_conn(db)?;
+    let current_platform = current_platform_tag();
+    let rows: Vec<ContextTargetRow> = conn
+        .prepare(
+            "SELECT id, context_id, executable, app_name, developer, platform
+             FROM context_targets
+             WHERE platform IS NULL OR platform = ?1",
+        )?
+        .query_map(params![current_platform], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut changed = false;
+
+    for (id, _context_id, executable, app_name, developer, platform) in rows {
+        if executable.starts_with("?::") {
+            continue;
+        }
+        let exact = installed_apps
+            .iter()
+            .find(|app| app.exe.trim().eq_ignore_ascii_case(executable.trim()));
+        let candidate = exact.or_else(|| {
+            crate::system::apps::closest_installed_app(
+                &executable,
+                app_name.as_deref(),
+                developer.as_deref(),
+                installed_apps,
+            )
+        });
+        let Some(candidate) = candidate else { continue };
+        if exact.is_none() && candidate.exe.eq_ignore_ascii_case(&executable) {
+            continue;
+        }
+        let next_executable = if exact.is_some() {
+            executable.clone()
+        } else {
+            candidate.exe.trim().to_lowercase()
+        };
+        let already_owned: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM context_targets WHERE executable = ?1 AND id <> ?2)",
+            params![next_executable, id],
+            |row| row.get(0),
+        )?;
+        if already_owned {
+            continue;
+        }
+        let next_app_name = normalize_optional_trimmed(Some(candidate.name.as_str()));
+        let next_developer = normalize_optional_trimmed(candidate.developer.as_deref());
+        let next_platform = platform.clone().or(current_platform.map(str::to_string));
+        if next_executable == executable
+            && next_app_name == app_name
+            && next_developer == developer
+            && next_platform == platform
+        {
+            continue;
+        }
+        let updated = conn.execute(
+            "UPDATE context_targets
+             SET executable = ?1, app_name = ?2, developer = ?3, platform = ?4
+             WHERE id = ?5",
+            params![
+                next_executable,
+                next_app_name,
+                next_developer,
+                next_platform,
+                id
+            ],
+        )?;
+        changed |= updated > 0;
+    }
+    Ok(changed)
 }
 
 pub fn remove_context_target(db: &Db, context_id: i64, executable: &str) -> Result<()> {
@@ -427,7 +601,10 @@ pub fn resolve_context_for_target(
     let conn = lock_conn(db)?;
     let everywhere_id = ensure_everywhere_context_conn(&conn)?;
     let normalized_executable = executable.trim().to_lowercase();
-    let normalized_domain = domain.map(str::trim).filter(|d| !d.is_empty()).map(str::to_lowercase);
+    let normalized_domain = domain
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .map(str::to_lowercase);
 
     if let Some(domain) = &normalized_domain {
         let context_id: Option<i64> = conn
@@ -604,27 +781,73 @@ mod tests {
     #[test]
     fn custom_instructions_round_trip_and_enforce_char_limit() {
         let db = open(":memory:").expect("db");
-        let context = insert_context_returning(&db, "Support", None, None, None, Some("  Reply in a friendly tone.  "))
-            .expect("context");
-        assert_eq!(context.custom_instructions.as_deref(), Some("Reply in a friendly tone."));
-
-        update_context_settings(&db, context.id, None, None, None, Some("Keep it brief.")).expect("update");
+        let context = insert_context_returning(
+            &db,
+            "Support",
+            None,
+            None,
+            None,
+            Some("  Reply in a friendly tone.  "),
+            false,
+        )
+        .expect("context");
         assert_eq!(
-            query_context(&db, context.id).unwrap().custom_instructions.as_deref(),
+            context.custom_instructions.as_deref(),
+            Some("Reply in a friendly tone.")
+        );
+
+        update_context_settings(
+            &db,
+            context.id,
+            None,
+            None,
+            None,
+            Some("Keep it brief."),
+            false,
+        )
+        .expect("update");
+        assert_eq!(
+            query_context(&db, context.id)
+                .unwrap()
+                .custom_instructions
+                .as_deref(),
             Some("Keep it brief.")
         );
 
-        update_context_settings(&db, context.id, None, None, None, None).expect("clear");
-        assert_eq!(query_context(&db, context.id).unwrap().custom_instructions, None);
+        update_context_settings(&db, context.id, None, None, None, None, false).expect("clear");
+        assert_eq!(
+            query_context(&db, context.id).unwrap().custom_instructions,
+            None
+        );
 
         let too_long = "x".repeat(CONTEXT_CUSTOM_INSTRUCTIONS_CHAR_LIMIT + 1);
-        assert!(update_context_settings(&db, context.id, None, None, None, Some(&too_long)).is_err());
+        assert!(
+            update_context_settings(&db, context.id, None, None, None, Some(&too_long), false)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn contextual_formatting_override_defaults_off_and_round_trips() {
+        let db = open(":memory:").expect("db");
+        let context = insert_context_returning(&db, "Terminal", None, None, None, None, false)
+            .expect("context");
+        assert!(!context.contextual_formatting_disabled);
+
+        update_context_settings(&db, context.id, None, None, None, None, true)
+            .expect("disable formatting");
+        assert!(
+            query_context(&db, context.id)
+                .expect("updated context")
+                .contextual_formatting_disabled
+        );
     }
 
     #[test]
     fn content_assignment_is_scoped_and_reversible() {
         let db = open(":memory:").expect("db");
-        let context = insert_context_returning(&db, "Writing", None, None, None, None).expect("context");
+        let context = insert_context_returning(&db, "Writing", None, None, None, None, false)
+            .expect("context");
         insert_dictionary_entry(&db, "Verenu", Some("Varinu")).expect("dictionary");
         insert_snippet(&db, "sig", "signature", "").expect("snippet");
         let dictionary_id = query_dictionary(&db).unwrap()[0].id;
@@ -673,7 +896,8 @@ mod tests {
     #[test]
     fn target_resolution_returns_one_context_and_falls_back_to_everywhere() {
         let db = open(":memory:").expect("db");
-        let context = insert_context_returning(&db, "Writing", None, None, None, None).expect("context");
+        let context = insert_context_returning(&db, "Writing", None, None, None, None, false)
+            .expect("context");
         assign_context_target(&db, context.id, "Code.EXE").expect("target");
 
         assert_eq!(
@@ -691,10 +915,62 @@ mod tests {
     }
 
     #[test]
+    fn stale_target_rebinds_to_close_replacement_with_same_developer() {
+        let db = open(":memory:").expect("db");
+        let context = insert_context_returning(&db, "Coding", None, None, None, None, false)
+            .expect("context");
+        assign_context_target_with_metadata(
+            &db,
+            context.id,
+            "t3-code-nightly-20260830.exe",
+            Some("T3 Code (nightly) 0.0.37-nightly.20260830"),
+            Some("T3 Tools"),
+        )
+        .expect("target");
+
+        let apps = vec![crate::system::apps::InstalledApp {
+            name: "T3 Code (nightly) 0.0.38-nightly.20260901".to_string(),
+            exe: "t3-code-nightly-20260901.exe".to_string(),
+            developer: Some("T3 Tools".to_string()),
+        }];
+        assert!(reconcile_context_targets(&db, &apps).expect("reconcile"));
+        let targets = query_context_targets(&db, Some(context.id)).expect("targets");
+        assert_eq!(targets[0].executable, "t3-code-nightly-20260901.exe");
+        assert_eq!(targets[0].developer.as_deref(), Some("T3 Tools"));
+    }
+
+    #[test]
+    fn stale_target_rejects_close_name_from_different_developer() {
+        let db = open(":memory:").expect("db");
+        let context = insert_context_returning(&db, "Coding", None, None, None, None, false)
+            .expect("context");
+        assign_context_target_with_metadata(
+            &db,
+            context.id,
+            "t3-code-nightly-old.exe",
+            Some("T3 Code nightly"),
+            Some("T3 Tools"),
+        )
+        .expect("target");
+
+        let apps = vec![crate::system::apps::InstalledApp {
+            name: "T3 Code nightly".to_string(),
+            exe: "t3-code-nightly-new.exe".to_string(),
+            developer: Some("Unrelated Tools".to_string()),
+        }];
+        assert!(!reconcile_context_targets(&db, &apps).expect("reconcile"));
+        let targets = query_context_targets(&db, Some(context.id)).expect("targets");
+        assert_eq!(targets[0].executable, "t3-code-nightly-old.exe");
+    }
+
+    #[test]
     fn website_domain_match_takes_priority_over_executable_match() {
         let db = open(":memory:").expect("db");
-        let exe_context = insert_context_returning(&db, "Browsing", None, None, None, None).expect("exe context");
-        let site_context = insert_context_returning(&db, "Work Email", None, None, None, None).expect("site context");
+        let exe_context = insert_context_returning(&db, "Browsing", None, None, None, None, false)
+            .expect("exe context");
+        let site_context =
+            insert_context_returning(&db, "Work Email", None, None, None, None, false)
+                .expect("site context");
         assign_context_target(&db, exe_context.id, "chrome.exe").expect("exe target");
         assign_context_website(&db, site_context.id, "mail.google.com").expect("website target");
 
@@ -721,17 +997,21 @@ mod tests {
     #[test]
     fn website_domain_normalizes_pasted_urls() {
         let db = open(":memory:").expect("db");
-        let context = insert_context_returning(&db, "Work Email", None, None, None, None).expect("context");
-        let target = assign_context_website(&db, context.id, "https://Mail.Google.com/mail/u/0?tab=rm")
-            .expect("assign");
+        let context = insert_context_returning(&db, "Work Email", None, None, None, None, false)
+            .expect("context");
+        let target =
+            assign_context_website(&db, context.id, "https://Mail.Google.com/mail/u/0?tab=rm")
+                .expect("assign");
         assert_eq!(target.domain, "mail.google.com");
     }
 
     #[test]
     fn assigning_a_target_replaces_its_previous_context() {
         let db = open(":memory:").expect("db");
-        let first = insert_context_returning(&db, "First", None, None, None, None).expect("first");
-        let second = insert_context_returning(&db, "Second", None, None, None, None).expect("second");
+        let first =
+            insert_context_returning(&db, "First", None, None, None, None, false).expect("first");
+        let second =
+            insert_context_returning(&db, "Second", None, None, None, None, false).expect("second");
         assign_context_target(&db, first.id, "editor.exe").expect("first target");
         assign_context_target(&db, second.id, "EDITOR.EXE").expect("replacement target");
 
@@ -740,10 +1020,43 @@ mod tests {
         assert_eq!(targets[0].context_id, second.id);
     }
 
+    /// A target the sync resolver couldn't match to any app installed on
+    /// this device (stored with the "?::" unresolved marker) must never
+    /// surface as a chip: a context group synced in from another platform
+    /// can legitimately contain apps that plainly don't exist here, and
+    /// showing a dead "(not found)" entry for every one of them is worse
+    /// than just not showing it. The row itself stays in the table so a
+    /// later reconciliation pass can still resolve it once a match exists.
+    #[test]
+    fn query_context_targets_hides_unresolved_sync_rows() {
+        let db = open(":memory:").expect("db");
+        let context =
+            insert_context_returning(&db, "Cross Platform", None, None, None, None, false)
+                .expect("context");
+        assign_context_target(&db, context.id, "editor.exe").expect("resolved target");
+        {
+            let conn = lock_conn(&db).expect("lock");
+            conn.execute(
+                "INSERT INTO context_targets (context_id, executable, platform) VALUES (?1, ?2, NULL)",
+                params![context.id, "?::some mac only app.app"],
+            )
+            .expect("insert unresolved row");
+        }
+
+        let targets = query_context_targets(&db, Some(context.id)).expect("targets");
+        assert_eq!(
+            targets.len(),
+            1,
+            "only the resolved target should be visible"
+        );
+        assert_eq!(targets[0].executable, "editor.exe");
+    }
+
     #[test]
     fn deleting_a_context_returns_items_to_everywhere() {
         let db = open(":memory:").expect("db");
-        let context = insert_context_returning(&db, "Temporary", None, None, None, None).expect("context");
+        let context = insert_context_returning(&db, "Temporary", None, None, None, None, false)
+            .expect("context");
         insert_dictionary_entry(&db, "Tauri", Some("Tari")).expect("dictionary");
         insert_snippet(&db, "sig", "signature", "").expect("snippet");
         let dictionary_id = query_dictionary(&db).unwrap()[0].id;
@@ -758,9 +1071,7 @@ mod tests {
 
         delete_context(&db, context.id).expect("delete context");
 
-        assert!(query_context_website_targets(&db, None)
-            .unwrap()
-            .is_empty());
+        assert!(query_context_website_targets(&db, None).unwrap().is_empty());
 
         assert_eq!(
             query_dictionary_for_context(&db, EVERYWHERE_CONTEXT_ID)
@@ -779,18 +1090,54 @@ mod tests {
     #[test]
     fn adding_existing_content_to_a_context_does_not_overwrite_everywhere() {
         let db = open(":memory:").expect("db");
-        let context = insert_context_returning(&db, "Writing", None, None, None, None).expect("context");
+        let context = insert_context_returning(&db, "Writing", None, None, None, None, false)
+            .expect("context");
         insert_dictionary_entry_returning(&db, "Verenu", Some("Vernu"), None).expect("dictionary");
         insert_snippet_returning(&db, "sig", "signature", "", None).expect("snippet");
 
-        assert!(insert_dictionary_entry_returning(&db, "Verenu", Some("Verano"), Some(context.id)).is_err());
+        assert!(
+            insert_dictionary_entry_returning(&db, "Verenu", Some("Verano"), Some(context.id))
+                .is_err()
+        );
         assert!(insert_snippet_returning(&db, "sig", "different", "", Some(context.id)).is_err());
 
         let dictionary = query_dictionary(&db).expect("dictionary");
         assert_eq!(dictionary[0].mistake.as_deref(), Some("Vernu"));
         let snippets = query_snippets(&db).expect("snippets");
         assert_eq!(snippets[0].expansion, "signature");
-        assert!(query_dictionary_for_context(&db, context.id).unwrap().is_empty());
-        assert!(query_snippets_for_context(&db, context.id).unwrap().is_empty());
+        assert!(query_dictionary_for_context(&db, context.id)
+            .unwrap()
+            .is_empty());
+        assert!(query_snippets_for_context(&db, context.id)
+            .unwrap()
+            .is_empty());
     }
+}
+
+/// Compact per-context totals for the context page's stat strip. Counts only
+/// dictations recorded since schema v18 (when `transcriptions.context_id`
+/// arrived) — older history has no context and is simply not attributed.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ContextStats {
+    pub dictations: i64,
+    pub words: i64,
+    /// `None` until the context has been used at least once.
+    pub last_used_at: Option<String>,
+}
+
+pub fn query_context_stats(db: &Db, context_id: i64) -> Result<ContextStats> {
+    let conn = lock_conn(db)?;
+    conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(words), 0), MAX(created_at)
+         FROM transcriptions WHERE context_id = ?1",
+        params![context_id],
+        |row| {
+            Ok(ContextStats {
+                dictations: row.get(0)?,
+                words: row.get(1)?,
+                last_used_at: row.get(2)?,
+            })
+        },
+    )
+    .map_err(Into::into)
 }

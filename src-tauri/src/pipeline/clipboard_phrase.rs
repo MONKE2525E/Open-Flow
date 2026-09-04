@@ -139,7 +139,12 @@ mod tests {
         .unwrap();
         assert_eq!(plan.markers.len(), 2);
         assert_eq!(plan.pre_cleanup.matches(&plan.markers[0]).count(), 1);
-        assert!(replace_phrase_with_marker("paste clipboard heresy", "paste clipboard here", "x".into()).is_none());
+        assert!(replace_phrase_with_marker(
+            "paste clipboard heresy",
+            "paste clipboard here",
+            "x".into()
+        )
+        .is_none());
     }
 
     #[test]
@@ -150,7 +155,10 @@ mod tests {
             "A\nB".into(),
         )
         .unwrap();
-        assert_eq!(restore(&format!("Hi {}", plan.markers[0]), &plan), Some("Hi A\nB".into()));
+        assert_eq!(
+            restore(&format!("Hi {}", plan.markers[0]), &plan),
+            Some("Hi A\nB".into())
+        );
         assert_eq!(restore("Hi", &plan), None);
     }
 
@@ -164,17 +172,25 @@ mod tests {
         .unwrap();
         let private = private_text(&plan.pre_cleanup, &plan);
         assert!(!private.contains("secret clipboard contents"));
-        assert_eq!(private.matches("[clipboard inserted, 25 characters]").count(), 2);
+        assert_eq!(
+            private
+                .matches("[clipboard inserted, 25 characters]")
+                .count(),
+            2
+        );
     }
 
     #[test]
     fn matches_unicode_case_without_slicing_invalid_boundaries() {
-        let plan = replace_phrase_with_marker("Bitte PÄSTE hier", "pÄste hier", "text".into()).unwrap();
+        let plan =
+            replace_phrase_with_marker("Bitte PÄSTE hier", "pÄste hier", "text".into()).unwrap();
         assert_eq!(restore(&plan.pre_cleanup, &plan), Some("Bitte text".into()));
     }
 
     #[test]
     fn ignores_text_shorter_than_phrase_without_panicking() {
-        assert!(replace_phrase_with_marker("paste", "paste clipboard here", "text".into()).is_none());
+        assert!(
+            replace_phrase_with_marker("paste", "paste clipboard here", "text".into()).is_none()
+        );
     }
 }

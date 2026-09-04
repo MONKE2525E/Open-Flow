@@ -9,8 +9,9 @@
   import { checkStatus } from '../../serviceStatus';
   import { ensureNotificationPermission } from '../../notifications';
   import Dropdown from '../Dropdown.svelte';
-  import type { ProviderId } from '../../settings';
+  import { saveSetting, type ProviderId } from '../../settings';
   import { MOTION_MS, MOTION_PX, animateWidth, motionMs, motionPx } from '../../motion';
+  import { modalFocusTrap } from '../../modalFocus';
 
   let logs = $state<string[]>([]);
   let autoScroll = $state(true);
@@ -33,6 +34,16 @@
   let simulationMessage = $state('');
   let simulatedProvider = $state<ProviderId>('groq');
   let providerDropdownOpen = $state(false);
+  let syncEnabled = $state(false);
+  let syncApprovalOpen = $state(false);
+  let syncMessage = $state('');
+
+  function handleSyncApprovalKeydown(event: KeyboardEvent): void {
+    if (syncApprovalOpen && event.key === 'Escape') {
+      event.preventDefault();
+      syncApprovalOpen = false;
+    }
+  }
 
   const simulatedProviders: { id: ProviderId; label: string }[] = [
     { id: 'groq', label: 'Groq' },
@@ -101,16 +112,51 @@
     }
   }
 
+  function handleSyncToggle(enabled: boolean) {
+    if (enabled) {
+      syncApprovalOpen = true;
+    } else {
+      void persistSyncEnabled(false);
+    }
+  }
+
+  async function persistSyncEnabled(enabled: boolean) {
+    syncMessage = '';
+    try {
+      await saveSetting('sync_enabled', enabled);
+      syncEnabled = enabled;
+      appStore.syncEnabled = enabled;
+      syncMessage = 'Saved. Relaunching Verenu to apply the change…';
+      setTimeout(() => {
+        void invoke('restart_app').catch(() => {
+          syncMessage = 'Saved, but Verenu could not relaunch. Quit and reopen it to apply the change.';
+        });
+      }, 250);
+    } catch (err) {
+      syncEnabled = !enabled;
+      syncMessage = 'Could not save the Sync setting.';
+      console.error('save sync_enabled failed:', err);
+    }
+  }
+
+  function approveSync() {
+    syncApprovalOpen = false;
+    void persistSyncEnabled(true);
+  }
+
   async function loadDevFlags() {
     try {
-      const [force, verbose, betaUpdates] = await Promise.all([
+      const [force, verbose, betaUpdates, sync] = await Promise.all([
         invoke<boolean | null>('get_setting', { key: 'force_setup_on_launch' }),
         invoke<boolean>('get_dev_logging_enabled'),
         invoke<boolean | null>('get_setting', { key: 'beta_updates_enabled' }),
+        invoke<boolean | null>('get_setting', { key: 'sync_enabled' }),
       ]);
       forceSetupOnLaunch = force ?? false;
       verboseEnabled = verbose ?? false;
       appStore.betaUpdatesEnabled = betaUpdates ?? false;
+      syncEnabled = sync ?? false;
+      appStore.syncEnabled = sync ?? false;
     } catch (err) {
       console.error('Failed to load dev flags:', err);
     }
@@ -263,22 +309,32 @@
   });
 </script>
 
+<svelte:window onkeydown={handleSyncApprovalKeydown} />
+
 <h2 class="settings-h">Developer</h2>
 <p class="panel-note">Session log stream from backend runtime. Dev mode resets after app restart.</p>
+<div class="setting-row beta-setting-row" data-setting-target="developer-sync">
+  <div>
+    <div class="label">LAN Device Sync</div>
+    <div class="desc">Experimental encrypted device-to-device sync. Off by default; the Sync settings page is hidden until enabled.</div>
+    {#if syncMessage}<div class="desc export-status">{syncMessage}</div>{/if}
+  </div>
+  <Toggle checked={syncEnabled} onchange={handleSyncToggle} label="Enable LAN device sync" />
+</div>
 <div class="privacy-warn" role="note">
   <strong>Privacy warning:</strong> Verbose logs can capture your full dictated text,
   the prompts sent to AI providers, and the active-app context. Anything you download
   or share contains this content in plain text — only enable verbose logging or export
   logs if you understand what they hold.
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="developer-setup">
   <div>
     <div class="label">Force Setup On Launch</div>
     <div class="desc">Shows onboarding on startup without erasing saved settings.</div>
   </div>
   <Toggle checked={forceSetupOnLaunch} onchange={handleForceSetupOnLaunch} label="Force setup on launch" />
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="developer-logs">
   <div>
     <div class="label">Real-time Logs</div>
     <div class="desc">{logs.length} lines loaded</div>
@@ -292,6 +348,31 @@
     </button>
   </div>
 </div>
+{#if syncApprovalOpen}
+  <div class="sync-approval-backdrop" role="presentation" onclick={() => (syncApprovalOpen = false)}>
+    <!-- svelte-ignore a11y_interactive_supports_focus a11y_click_events_have_key_events -->
+    <div
+      class="sync-approval"
+      use:modalFocusTrap={{
+        active: syncApprovalOpen,
+        initialFocus: () => document.querySelector<HTMLElement>('.sync-approval .btn-ghost'),
+      }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sync-approval-title"
+      tabindex="-1"
+      onclick={(event) => event.stopPropagation()}
+      onkeydown={(event) => { if (event.key !== 'Escape') event.stopPropagation(); }}
+    >
+      <h3 id="sync-approval-title">Enable LAN Device Sync?</h3>
+      <p>This is a beta feature. It is not fully secure or built out yet. Devices on your local network may discover this installation and paired devices can exchange selected Verenu data.</p>
+      <div class="actions">
+        <button class="btn-ghost" onclick={() => (syncApprovalOpen = false)}>Cancel</button>
+        <button class="btn-primary" onclick={approveSync}>I understand — enable Sync</button>
+      </div>
+    </div>
+  </div>
+{/if}
 <div class="logs-panel-wrap">
   <div class="logs-panel scroll-styled" bind:this={logViewport}>
     {#if logs.length === 0}
@@ -320,7 +401,7 @@
     {copied ? 'Copied' : 'Copy all'}
   </button>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="developer-download-logs">
   <div>
     <div class="label">Download Logs</div>
     <div class="desc">Writes current session logs to your Downloads folder.</div>
@@ -332,7 +413,7 @@
     {exporting ? 'Saving...' : 'Download Logs'}
   </button>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="developer-status">
   <div>
     <div class="label">Provider Status Check</div>
     <div class="desc">Fetches api.verenu.com/v1/provider-status directly and shows the raw response.</div>
@@ -344,7 +425,7 @@
 {#if providerStatusRaw}
   <pre class="raw-panel scroll-styled">{providerStatusRaw}</pre>
 {/if}
-<div class="setting-row dev-simulations">
+<div class="setting-row dev-simulations" data-setting-target="developer-simulations">
   <div>
     <div class="label">UI Simulations</div>
     <div class="desc">Preview outage, offline, and global-message notices without changing the live APIs.</div>
@@ -394,7 +475,7 @@
     <button class="btn-ghost" onclick={clearSimulations}>Clear</button>
   </div>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="developer-notifications">
   <div>
     <div class="label">System Notification Test</div>
     <div class="desc">Choose a notification type, then send the native toast and test its click destination.</div>
@@ -464,7 +545,7 @@
     </button>
   </div>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="developer-installer">
   <div>
     <div class="label">Installer Test</div>
     <div class="desc">
@@ -484,6 +565,38 @@
 </div>
 
 <style>
+  .sync-approval-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: color-mix(in srgb, var(--ink) 28%, transparent);
+  }
+  .sync-approval {
+    width: min(440px, 100%);
+    padding: 22px;
+    border: 1px solid var(--line-strong);
+    border-radius: 14px;
+    background: var(--paper);
+    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.24);
+  }
+  .sync-approval h3 {
+    margin: 0 0 9px;
+    color: var(--ink);
+    font-size: 17px;
+  }
+  .sync-approval p {
+    margin: 0 0 18px;
+    color: var(--ink-soft);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .sync-approval .actions {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
   .logs-panel-wrap {
     position: relative;
     margin-top: 12px;

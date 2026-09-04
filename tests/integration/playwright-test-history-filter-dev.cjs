@@ -90,12 +90,33 @@ const historyMockWrap = function () {
       return page.locator('.day-text').allInnerTexts();
     };
 
+    // Hover metadata must settle without feeding an animated row height back
+    // into the virtualized list. Sampling both geometry values catches the
+    // rapid layout loop that is otherwise easy to miss in a screenshot.
+    const hoverRow = dayRows.first();
+    await hoverRow.hover();
+    const hoverSamples = [];
+    for (let i = 0; i < 16; i += 1) {
+      hoverSamples.push(await hoverRow.evaluate((el) => {
+        const row = el.getBoundingClientRect();
+        const text = el.querySelector('.day-text')?.getBoundingClientRect();
+        return { height: row.height, textTop: text?.top ?? row.top };
+      }));
+      await page.waitForTimeout(25);
+    }
+    const settledSamples = hoverSamples.slice(-4);
+    const distinctSettledHeights = new Set(settledSamples.map(({ height }) => height.toFixed(2)));
+    const textTops = hoverSamples.map(({ textTop }) => textTop);
+    if (distinctSettledHeights.size > 1 || Math.max(...textTops) - Math.min(...textTops) > 1) {
+      errors.push(`hovered history row did not settle: ${JSON.stringify(hoverSamples)}`);
+    }
+
     if (false) {
     // Row metadata: app label + compact duration under the text.
-    const metaFirst = await page.locator('.day-meta').first().innerText();
+    const metaFirst = await page.locator('.day-meta-left').first().innerText();
     if (!/Outlook · \d+s/.test(metaFirst)) errors.push(`row meta wrong: "${metaFirst}"`);
     // Row with no app but a duration still shows just the duration.
-    const metaNoApp = await page.locator('.day-row:has-text("Draft a response to the vendor") .day-meta').innerText();
+    const metaNoApp = await page.locator('.day-row:has-text("Draft a response to the vendor") .day-meta-left').innerText();
     if (metaNoApp !== '5s') errors.push(`no-app row meta wrong: "${metaNoApp}"`);
     if ((await page.locator('.day-row').count()) !== 6) errors.push('all history rows should render unfiltered');
     }
@@ -141,9 +162,9 @@ const historyMockWrap = function () {
     await page.waitForTimeout(500);
     if ((await page.locator('.day-row').count()) !== 6) errors.push('resetting to All apps must restore all rows');
     if ((await page.locator('.empty-state').count()) !== 0) errors.push('empty state must disappear after resetting to All apps');
-    const metaFirst = await page.locator('.day-meta').first().innerText();
+    const metaFirst = await page.locator('.day-meta-left').first().innerText();
     if (!/Outlook/.test(metaFirst) || !/\d+s/.test(metaFirst)) errors.push(`row meta wrong: "${metaFirst}"`);
-    const metaNoApp = await page.locator('.day-row:has-text("Draft a response to the vendor") .day-meta').innerText();
+    const metaNoApp = await page.locator('.day-row:has-text("Draft a response to the vendor") .day-meta-left').innerText();
     if (metaNoApp !== '5s') errors.push(`no-app row meta wrong: "${metaNoApp}"`);
 
     // The explicit clear action enters with a horizontal transition and resets

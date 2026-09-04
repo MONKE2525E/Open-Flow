@@ -17,7 +17,7 @@
 </div>
 
 <style>
-  .brand { min-height: var(--native-titlebar-height, 32px); padding: 16px 18px 0 16px; display: flex; align-items: flex-start; gap: 10px; }
+  .brand { min-height: var(--native-titlebar-height, 32px); padding: 16px 18px 0 16px; display: flex; align-items: center; gap: 6px; }
   .brand-mark { width: 24px; height: 20px; color: var(--accent); }
   .brand-mark :global(svg) { display: block; }
   .brand-name { font-family: var(--serif); font-size: 17px; letter-spacing: -0.015em; font-weight: 500; color: var(--ink); white-space: nowrap; display: flex; align-items: flex-end; gap: 2px; }

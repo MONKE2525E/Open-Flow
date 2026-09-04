@@ -86,7 +86,18 @@
     const target = e.target instanceof Element
       ? e.target
       : (e.target as Node)?.parentElement;
-    if (target && root?.contains(target)) return;
+    // Do not rely solely on the element that was focused when the menu opened.
+    // On some WebViews a pointer click does not focus the trigger, leaving
+    // `root` unset. The opening click then reaches this window listener after
+    // the menu is mounted and immediately closes it again. Resolve the scope
+    // from the click target as a fallback so mouse-opened menus stay usable.
+    const targetRoot = target?.closest(closeSelector || '.ui-dropdown');
+    // When the trigger was focused, only this controller's captured root is
+    // allowed to count as inside. A shared selector can match sibling
+    // dropdowns, especially on Insights where both controls use range-picker.
+    // Keep the target fallback only for WebViews that failed to focus the
+    // opening trigger at all.
+    if (target && (root ? root.contains(target) || targetRoot === root : targetRoot)) return;
     open = false;
   }
 

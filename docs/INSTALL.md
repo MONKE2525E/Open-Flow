@@ -1,6 +1,6 @@
 # Install Verenu
 
-Verenu is a free, open-source dictation app for Windows and macOS. There's no account, no subscription, and nothing to install beyond the app itself — you bring your own API key for transcription and cleanup (see [Add Your API Key](API_KEYS.md)).
+Verenu is a free, open-source dictation app for Windows and macOS. There is no account or subscription. Cloud providers use API keys that you provide, while local transcription and cleanup need no key. See [Add Your API Key](API_KEYS.md).
 
 ## Windows
 
@@ -8,7 +8,7 @@ Verenu is a free, open-source dictation app for Windows and macOS. There's no ac
    - `Verenu_X.Y.Z_x64_en-US.msi`, or
    - `Verenu_X.Y.Z_x64-setup.exe`
 2. Run the installer and follow the prompts.
-3. Launch Verenu. The first-run setup walks you through picking a provider and adding your API key.
+3. Launch Verenu. The first-run setup walks you through choosing local models or a cloud provider and adding a key when one is required.
 
 Requires Windows 10 or 11. Verenu uses the built-in WebView2 runtime — no separate browser engine to install.
 
@@ -16,10 +16,11 @@ Requires Windows 10 or 11. Verenu uses the built-in WebView2 runtime — no sepa
 
 1. Download the build that matches your Mac from the [GitHub Releases](https://github.com/MONKE2525E/Verenu/releases) page — Apple Silicon or Intel.
 2. Move Verenu to your Applications folder and open it.
-3. macOS will ask for a few permissions the first time you use Verenu — grant all of them, since dictation won't work correctly without them:
+3. macOS may ask for permissions the first time you use Verenu. Dictation requires:
    - **Microphone** — to capture your voice while you hold the hotkey
    - **Accessibility** — to paste cleaned-up text into the app you're using and read text for corrections
-   - **Input Monitoring** — to detect the global hotkey (Fn+Control) even when Verenu isn't the focused app
+
+Notifications are optional and only affect status and update alerts. The macOS hotkey does not require Input Monitoring.
 
 If macOS prompts for your login password when Verenu first saves your API key to Keychain, choose **Always Allow** — this avoids repeated prompts later.
 
@@ -74,7 +75,7 @@ If you want independent confirmation that an installer is clean, every release o
 
 ## Next step
 
-Once Verenu is installed, continue with [Add Your API Key](API_KEYS.md).
+Once Verenu is installed, continue with [Add Your API Key](API_KEYS.md) if you plan to use a cloud provider, or go straight to [Your First Dictation](FIRST_DICTATION.md) for a local setup.
 
 ## Related Docs
 

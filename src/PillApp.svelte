@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { getProfileLabel } from './lib/appMappings';
   import { formatKeyLabel } from './lib/platform';
+  import { BARS, createPillVisualizer } from './lib/pillVisualizer';
 
-  type PillState = 'idle' | 'recording' | 'repair_recording' | 'processing' | 'loading_local_model' | 'handsfree' | 'error' | 'cancelled' | 'paste_failed' | 'copied' | 'clipboard_warning' | 'feedback_prompt' | 'repair_input' | 'repair_processing' | 'repair_proposal' | 'repair_applying' | 'repair_done' | 'repair_error';
+  type PillState = 'idle' | 'recording' | 'repair_recording' | 'processing' | 'loading_local_model' | 'handsfree' | 'error' | 'cancelled' | 'interrupted' | 'paste_failed' | 'copied' | 'clipboard_warning' | 'feedback_prompt' | 'repair_input' | 'repair_processing' | 'repair_proposal' | 'repair_applying' | 'repair_done' | 'repair_error';
+  const isCancelLike = (s: PillState) => s === 'cancelled' || s === 'interrupted';
   type RepairProposal = { id: number; summary: string; scope: string };
   let state: PillState = 'idle';
   let errorMsg = '';
@@ -38,9 +39,16 @@
   let repairIdleTimer: ReturnType<typeof setTimeout> | null = null;
   let repairHotkeyLabel: string | null = null;
 
-  // Resolved tone profile for the current dictation (label form, e.g. "Casual"),
-  // emitted by the backend from the pipeline's own resolution.
-  let profileLabel: string | null = null;
+  // Keep the native pill click-through until a state has a real control.
+  // Delayed notification controls enable cursor events when they mount.
+  async function setPillInteractive(interactive: boolean) {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    await getCurrentWindow().setIgnoreCursorEvents(!interactive).catch(() => {});
+  }
+
+  // Resolved context for the current dictation (e.g. "Slack", "Everywhere") —
+  // where the text is headed, emitted by the backend's own resolution.
+  let contextLabel: string | null = null;
 
   // Processing sub-stage ("Transcribing…" / "Cleaning…" / "Pasting…"), driven
   // by real `pill-stage` events from the pipeline. Rows for the stages that
@@ -197,8 +205,6 @@
   // Rows actually mounted, and where the current stage sits among them.
   $: activeStageRows = seenStages.map((i) => STAGE_ROWS[i]);
   $: rollPos = Math.max(0, seenStages.indexOf(stageIndex));
-
-  const BARS = 12;
 
   // --- Content-fit window sizing -------------------------------------------
   // The pill window's native size follows the visible content (capsule +
@@ -374,98 +380,35 @@
     }
   }
 
-  // Level from Rust is already 0–1 (raw_rms × mic_gain × 15, capped).
-  // Gate: ignore anything below 4% of full scale (background noise).
-  const GATE = 0.04;
-
-  // Per-bar gain coefficients — bell curve so middle bars are taller, fixed at mount.
-  const barGains: number[] = Array.from({ length: BARS }, (_, i) => {
-    const center = Math.sin((i / (BARS - 1)) * Math.PI) * 0.35;
-    return 0.45 + center + Math.random() * 0.2;
-  });
-
+  // Visualizer: mirrored temporal envelope history. Distance from the centre
+  // means AGE — the newest audio appears at the two middle bars and travels
+  // outward as it ages, mirrored left/right, so the outermost pair shows the
+  // envelope ~600ms ago. The whole signal chain (perceptual dB mapping, bounded
+  // normalization, attack/release envelope, history ring, per-bar spring) lives
+  // in lib/pillVisualizer.ts so it can be driven directly by unit tests; this
+  // component only owns the rAF loop and the rendering.
   const BAR_MIN_H = 3;
-  const BAR_MAX_H = 16;
   let barHeights: number[] = Array(BARS).fill(BAR_MIN_H);
-  let targetLevel = 0;
-  let smoothed = 0;
+  const visualizer = createPillVisualizer();
   let rafId = 0;
-  const PEAK_FLOOR = 0.07;
-  let adaptivePeak = PEAK_FLOOR;
-
-  let lastAnimTime = 0;
-
-  // Spatially-continuous shimmer: three sine waves of different spatial
-  // frequencies drifting at different speeds, sampled once per bar. Because
-  // it's a smooth function of (position, time), neighbouring bars always move
-  // together as one flowing waveform. What this replaces gave every bar its
-  // own independent random walk, re-rolled every 400ms and lerped between
-  // rolls — which is why a steady voice read as a row of unrelated twitching
-  // dots instead of audio, and why it managed to look both too static (the
-  // walk barely travelled between rolls) and too restless (neighbours never
-  // agreed on a direction). Being pure (u, t) math it also keeps the row alive
-  // at a dead-constant input level, with no per-frame Math.random() at all.
-  function shimmerAt(u: number, t: number): number {
-    const wave =
-      Math.sin(u * 3.1 + t * 1.9) * 0.5 +
-      Math.sin(u * 6.3 - t * 1.3) * 0.3 +
-      Math.sin(u * 1.7 + t * 2.7) * 0.2;
-    return 0.72 + wave * 0.28; // ≈ 0.44 … 1.00
-  }
 
   function animateBars(time: number) {
-    if (!lastAnimTime) lastAnimTime = time;
-    const dt = Math.min(time - lastAnimTime, 50);
-    lastAnimTime = time;
-
     // Keep bar snapping aligned to whichever monitor the pill is currently on.
     refreshDpr();
-
-    // Rise stays quick so the bars catch speech onsets. The fall used to decay
-    // at 0.97/frame — ~1.3s to bottom out, so the row went on melting long
-    // after the sound stopped and every syllable smeared into the next.
-    // 0.90 lands in ~400ms: still smooth, but it actually tracks the voice.
-    const riseRate = 1 - Math.pow(0.84, dt / 16.66);
-    const fallRate = 1 - Math.pow(0.9, dt / 16.66);
-
-    if (targetLevel > smoothed) {
-      smoothed += (targetLevel - smoothed) * riseRate;
-    } else {
-      smoothed += (targetLevel - smoothed) * fallRate;
-    }
-
-    // Soft noise gate: subtract the floor rather than branching on it. The old
-    // `if (smoothed < GATE) fill(3)` snapped all twelve bars flat in a single
-    // frame the instant the level crossed the threshold, so a fading tail
-    // stopped mid-fall and collapsed — the "drifts down slowly, then just
-    // compacts" artifact. Subtracting is continuous, so the bars simply reach
-    // the floor and stay there.
-    const gated = Math.max(0, smoothed - GATE);
-
-    if (gated > adaptivePeak) adaptivePeak = gated;
-    // Re-adapt within a sentence or two. At the old 0.9997 the peak took ~40s
-    // to forget a single loud moment, so everything after a cough or a laugh
-    // normalised against it and sat near-flat.
-    adaptivePeak = Math.max(PEAK_FLOOR, adaptivePeak * Math.pow(0.9985, dt / 16.66));
-
-    // Normalize against the adaptive peak so quiet mics still drive bars to
-    // full height; ease the mapping (pow 1.5) so small noises stay gentle.
-    const eased = Math.pow(Math.min(gated / adaptivePeak, 1), 1.5);
-    const t = time / 1000;
-
-    barHeights = barGains.map((gain, i) => {
-      const energy = eased * gain * shimmerAt(i / (BARS - 1), t);
-      return BAR_MIN_H + energy * (BAR_MAX_H - BAR_MIN_H);
-    });
-
+    barHeights = visualizer.step(time);
     rafId = requestAnimationFrame(animateBars);
   }
 
+  function resetVisualizer() {
+    visualizer.reset();
+    barHeights = Array(BARS).fill(BAR_MIN_H);
+  }
+
   function startRaf() {
-    if (rafId === 0) { lastAnimTime = 0; rafId = requestAnimationFrame(animateBars); }
+    if (rafId === 0) { resetVisualizer(); rafId = requestAnimationFrame(animateBars); }
   }
   function stopRaf() {
-    if (rafId !== 0) { cancelAnimationFrame(rafId); rafId = 0; barHeights = Array(BARS).fill(BAR_MIN_H); }
+    if (rafId !== 0) { cancelAnimationFrame(rafId); rafId = 0; resetVisualizer(); }
   }
 
 
@@ -481,8 +424,8 @@
       repairError = '';
       repairProposal = null;
       clearStage();
-      profileLabel = null;
-      smoothed = 0;
+      contextLabel = null;
+      resetVisualizer();
       errOpen = false;
       errWidth = 0;
       errHeight = 34;
@@ -593,6 +536,7 @@
       }
       errLines = lines;
       errOpen = true;
+      void setPillInteractive(true);
       // Eagerly size the native window to the target before the CSS
       // transition starts, so the growing pill is never clipped while the
       // ResizeObserver catch-up lags behind the animation.
@@ -617,6 +561,40 @@
         applySize();
       })
       .catch(() => {});
+  }
+
+  // Repair flow renders as ONE card element across every stage, so the capsule
+  // morphs between stages instead of unmounting/remounting. cardW/cardH mirror
+  // the measured body size (the card itself is padding-less and clips), which
+  // is what the width/height transition animates between — including body
+  // swaps, an inline error appearing, and the textarea growing.
+  $: isRepairCard =
+    state === 'feedback_prompt' ||
+    state === 'repair_input' ||
+    state === 'repair_recording' ||
+    state === 'repair_processing' ||
+    state === 'repair_applying' ||
+    state === 'repair_proposal' ||
+    state === 'repair_error' ||
+    state === 'repair_done';
+  $: cardPhase =
+    state === 'feedback_prompt' ? 'feedback'
+    : state === 'repair_proposal' ? 'proposal'
+    : state === 'repair_error' ? 'error'
+    : state === 'repair_done' ? 'done'
+    : 'form';
+  let cardW = 0;
+  let cardH = 0;
+  // Re-runs per body mount (the {#key cardPhase} block remounts it), so the
+  // observer always tracks the live body. The synchronous first read happens
+  // before paint and matches the card's natural CSS size, so a fresh open
+  // doesn't animate up from zero.
+  function observeCardBody(node: HTMLElement) {
+    const read = () => { cardW = node.offsetWidth; cardH = node.offsetHeight; };
+    read();
+    const ro = new ResizeObserver(read);
+    ro.observe(node);
+    return { destroy: () => ro.disconnect() };
   }
 
   onMount(() => {
@@ -670,15 +648,16 @@
           clearStage();
         }
         if (incoming === 'recording' || incoming === 'repair_recording') {
-          profileLabel = null;
+          contextLabel = null;
         } else if (
           incoming === 'error' ||
           incoming === 'cancelled' ||
+          incoming === 'interrupted' ||
           incoming === 'paste_failed' ||
           incoming === 'copied'
         ) {
           clearStage();
-          profileLabel = null;
+          contextLabel = null;
         }
 
         if (incoming === 'idle' && state !== 'idle') {
@@ -729,10 +708,27 @@
 
         if (incoming === 'handsfree') {
           showHfButtons = false;
-          hfTimer = setTimeout(() => { showHfButtons = true; hfTimer = null; }, 150);
+          hfTimer = setTimeout(() => {
+            hfTimer = null;
+            if (state === 'handsfree') {
+              showHfButtons = true;
+              void setPillInteractive(true);
+            }
+          }, 150);
         }
         prevState = state;
         state = incoming;
+        void setPillInteractive(
+          incoming === 'cancelled' ||
+          incoming === 'interrupted' ||
+          incoming === 'paste_failed' ||
+          incoming === 'copied' ||
+          incoming === 'repair_input' ||
+          incoming === 'repair_recording' ||
+          incoming === 'repair_processing' ||
+          incoming === 'repair_proposal' ||
+          incoming === 'repair_error'
+        );
         if (state === 'repair_proposal' || state === 'repair_error') {
           // The window now has real OS keyboard focus (see set_pill_focusable
           // in pill.rs), but nothing has DOM focus yet — without this, Escape
@@ -768,7 +764,7 @@
         } else {
           stopRaf();
         }
-        if (state !== 'recording' && state !== 'repair_recording' && state !== 'handsfree') smoothed = 0;
+        if (state !== 'recording' && state !== 'repair_recording' && state !== 'handsfree') resetVisualizer();
         if (state === 'error') {
           openError();
           if (errorTimer) clearTimeout(errorTimer);
@@ -792,16 +788,16 @@
           errScroll = false;
         }
 
-        if (state === 'cancelled') {
+        if (isCancelLike(state)) {
           cancelOpen = false;
           showCancelBtn = false;
           requestAnimationFrame(() => {
-            if (state === 'cancelled') cancelOpen = true;
+            if (isCancelLike(state)) cancelOpen = true;
           });
           if (cancelBtnTimer) clearTimeout(cancelBtnTimer);
           cancelBtnTimer = setTimeout(() => {
             cancelBtnTimer = null;
-            if (state === 'cancelled') showCancelBtn = true;
+            if (isCancelLike(state)) showCancelBtn = true;
           }, 200);
           if (cancelDismissTimer) clearTimeout(cancelDismissTimer);
           cancelDismissTimer = setTimeout(() => {
@@ -809,7 +805,7 @@
             // Just hide the toast — the capture itself stays resumable from
             // Home for the full backend window. Only the explicit dismiss
             // button actually discards it (see dismissCancelled()).
-            if (state === 'cancelled') goIdle();
+            if (isCancelLike(state)) goIdle();
           }, 10000);
         } else {
           if (cancelBtnTimer) {
@@ -840,7 +836,10 @@
           // not as a second, disconnected animation arriving a while later.
           copyBtnTimer = setTimeout(() => {
             copyBtnTimer = null;
-            if (state === 'paste_failed') showCopyBtn = true;
+            if (state === 'paste_failed') {
+              showCopyBtn = true;
+              void setPillInteractive(true);
+            }
           }, 180);
           if (pasteFailedDismissTimer) clearTimeout(pasteFailedDismissTimer);
           pasteFailedDismissTimer = setTimeout(() => {
@@ -886,15 +885,19 @@
       if (!mounted) { l2(); return; }
       unlisteners.push(l2);
 
-      const l3 = await listen<number>('audio-level', (ev) => {
-        targetLevel = ev.payload ?? 0;
+      // Short-window envelope batches (see EnvelopeTap in media/audio.rs) — the
+      // visualizer's real input. The scalar `audio-level` event is still emitted
+      // for other consumers, but one RMS value per 50ms cannot show audio
+      // flowing, so the pill does not use it.
+      const l3 = await listen<number[]>('audio-envelope', (ev) => {
+        if (ev.payload?.length) visualizer.pushEnvelope(ev.payload);
       });
       if (!mounted) { l3(); return; }
       unlisteners.push(l3);
 
-      const l5 = await listen<string>('pill-profile', (ev) => {
-        const profile = ev.payload;
-        profileLabel = profile && profile !== 'unknown' ? getProfileLabel(profile) : null;
+      const l5 = await listen<string>('pill-context', (ev) => {
+        const name = ev.payload?.trim();
+        contextLabel = name ? name : null;
       });
       if (!mounted) { l5(); return; }
       unlisteners.push(l5);
@@ -909,7 +912,7 @@
       // *another* window (Home's banner) — if this toast is still showing,
       // it's now stale, so drop it without re-invoking dismiss.
       const l4 = await listen('verenu:cancelled-capture-cleared', () => {
-        if (state === 'cancelled') goIdle();
+        if (isCancelLike(state)) goIdle();
       });
       if (!mounted) { l4(); return; }
       unlisteners.push(l4);
@@ -1143,127 +1146,138 @@
   <div class="pill-cluster"
        class:steady-width={state === 'processing'}
        class:steady-width-hf={state === 'handsfree'}
+       class:steady-repair={isRepairCard && cardH > 0}
+       style="--repair-w:{cardW}px; --repair-h:{cardH}px"
        bind:this={clusterEl}>
-  {#if profileLabel && (state === 'recording' || state === 'repair_recording' || state === 'processing' || state === 'handsfree' || state === 'loading_local_model')}
-      <span class="pill-profile">{profileLabel}</span>
+  {#if contextLabel && (state === 'recording' || state === 'repair_recording' || state === 'processing' || state === 'handsfree' || state === 'loading_local_model')}
+      <span class="pill-context" title={contextLabel}>{contextLabel}</span>
     {/if}
 
   {#if state === 'recording'}
     <div class="pill recording" class:dying={dying}>
       {#each barHeights as h, i (i)}
-        <div class="bar" style="height: {snap(h, dpr)}px"></div>
+        <div class="bar" style="height: {h}px"></div>
       {/each}
     </div>
 
-  {:else if state === 'repair_recording'}
-    <!-- Recording the complaint stacks a small capsule above the still-visible
-         input card (instead of replacing it) so the user keeps context on
-         what they're re-dictating over, per the repair-flow redesign. -->
-    <div class="pill recording repair-recording" class:dying={dying}>
-      <button class="hf-btn cancel" onclick={cancelRepair} aria-label="Cancel complaint recording">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
-          <path d="M6 6l12 12M6 18 18 6"/>
-        </svg>
-      </button>
-      <div class="bars-hf">
-        {#each barHeights as h, i (i)}
-          <div class="bar" style="height: {snap(h, dpr)}px"></div>
-        {/each}
+  {:else if isRepairCard}
+    {#if state === 'repair_recording'}
+      <!-- Recording the complaint stacks a small capsule above the still-visible
+           input card (instead of replacing it) so the user keeps context on
+           what they're re-dictating over, per the repair-flow redesign. -->
+      <div class="pill recording repair-recording" class:dying={dying}>
+        <button class="hf-btn cancel" onclick={cancelRepair} aria-label="Cancel complaint recording">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+            <path d="M6 6l12 12M6 18 18 6"/>
+          </svg>
+        </button>
+        <div class="bars-hf">
+          {#each barHeights as h, i (i)}
+            <div class="bar" style="height: {h}px"></div>
+          {/each}
+        </div>
+        <button class="hf-btn confirm" onclick={stopRepairRecording} aria-label="Use this complaint">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 6L9 17l-5-5"/>
+          </svg>
+        </button>
       </div>
-      <button class="hf-btn confirm" onclick={stopRepairRecording} aria-label="Use this complaint">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M20 6L9 17l-5-5"/>
-        </svg>
-      </button>
-    </div>
-    <div class="pill repair-card repair-form" class:dying={dying}>
-      <div class="repair-form-head">
-        <span class="repair-label">What went wrong?</span>
-      </div>
-      <textarea class="repair-input" rows="2" value={repairComplaint} disabled placeholder="e.g. “pull request” became “pool request”"></textarea>
-    </div>
+    {/if}
 
-  {:else if state === 'feedback_prompt'}
-    <!-- Passive, buttonless toast — replaces the old Not-good/Good prompt.
-         Reporting an issue is now a dedicated hotkey (configured in Settings,
-         see app_hotkey.rs's RepairOpen handling) rather than a click target,
-         since the whole point is the AI does the classifying, not a canned
-         button flow. -->
-    <div class="pill repair-card feedback-card" class:dying={dying}>
-      {#if repairHotkeyLabel}
-        <span class="repair-question">Press {repairHotkeyLabel} to report an issue</span>
-      {:else}
-        <span class="repair-question">Set a hotkey in Settings to report dictation issues</span>
-      {/if}
-    </div>
+    <!-- One persistent card for the whole repair flow (toast → input →
+         diagnosing → proposal/error → applying → done). Each stage used to be
+         its own {:else if} branch, so every step hard-cut one card out and
+         popped the next one in. Keeping a single element means the capsule
+         morphs (width/height animated from the measured body size, content
+         cross-fades) instead of snapping between stages. -->
+    <div class="pill repair-card"
+         class:feedback-card={cardPhase === 'feedback' || cardPhase === 'done'}
+         class:repair-form={cardPhase === 'form'}
+         class:repair-proposal={cardPhase === 'proposal' || cardPhase === 'error'}
+         class:from-processing={cardPhase === 'feedback' && (prevState === 'processing' || prevState === 'loading_local_model')}
+         class:dying={dying}
+         style={cardW ? `width:${cardW}px; height:${cardH}px` : ''}
+         role="dialog" tabindex="-1" onkeydown={handleRepairKeydown}>
+      {#key cardPhase}
+        <div class="repair-body" use:observeCardBody>
+          {#if cardPhase === 'feedback'}
+            <!-- Passive, buttonless toast — reporting an issue is a dedicated
+                 hotkey (see app_hotkey.rs's RepairOpen handling), not a click
+                 target, since the AI does the classifying. -->
+            {#if repairHotkeyLabel}
+              <span class="repair-question">Press {repairHotkeyLabel} to report an issue</span>
+            {:else}
+              <span class="repair-question">Set a hotkey in Settings to report dictation issues</span>
+            {/if}
 
-  {:else if state === 'repair_input' || state === 'repair_processing' || state === 'repair_applying'}
-    <div class="pill repair-card repair-form" class:dying={dying} role="dialog" tabindex="-1" onkeydown={handleRepairKeydown}>
-      <div class="repair-form-head">
-        <label for="repair-complaint" class="repair-label">What went wrong?</label>
-        {#if state !== 'repair_applying'}
-          <button class="hf-btn repair-close" onclick={cancelRepair} aria-label="Cancel">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
-              <path d="M6 6l12 12M6 18 18 6"/>
+          {:else if cardPhase === 'done'}
+            <svg class="copied-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12"/>
             </svg>
-          </button>
-        {/if}
-      </div>
-      <textarea id="repair-complaint" class="repair-input" rows="2" bind:value={repairComplaint} maxlength="200" disabled={state !== 'repair_input'} placeholder="e.g. “pull request” became “pool request”" spellcheck="false" autocomplete="off"></textarea>
-      {#if repairError}<span class="repair-inline-error">{repairError}</span>{/if}
-      <div class="repair-actions">
-        {#if state === 'repair_input'}
-          <button class="repair-primary" onclick={analyzeRepair} disabled={!repairComplaint.trim()}>Analyze</button>
-        {:else if state === 'repair_processing'}
-          <span class="repair-status"><span class="loading-spinner"></span>Diagnosing…</span>
-        {:else}
-          <span class="repair-status"><span class="loading-spinner"></span>Applying…</span>
-        {/if}
-      </div>
-    </div>
+            <span class="copied-text">Repair applied</span>
 
-  {:else if state === 'repair_proposal'}
-    <div class="pill repair-card repair-proposal" class:dying={dying} role="dialog" tabindex="-1" onkeydown={handleRepairKeydown}>
-      <div class="repair-form-head">
-        <span class="repair-label">Proposed repair</span>
-        <button class="hf-btn repair-close" onclick={cancelRepair} aria-label="Cancel">
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
-            <path d="M6 6l12 12M6 18 18 6"/>
-          </svg>
-        </button>
-      </div>
-      <strong>{repairProposal?.summary}</strong>
-      <span class="repair-scope">{repairProposal?.scope}</span>
-      {#if repairError}<span class="repair-inline-error">{repairError}</span>{/if}
-      <div class="repair-actions">
-        <button class="repair-primary" onclick={applyRepair}>Apply</button>
-      </div>
-    </div>
+          {:else if cardPhase === 'form'}
+            <div class="repair-form-head">
+              <label for="repair-complaint" class="repair-label">What went wrong?</label>
+              {#if state !== 'repair_applying' && state !== 'repair_recording'}
+                <button class="hf-btn repair-close" onclick={cancelRepair} aria-label="Cancel">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+                    <path d="M6 6l12 12M6 18 18 6"/>
+                  </svg>
+                </button>
+              {/if}
+            </div>
+            <textarea id="repair-complaint" class="repair-input" rows="2" bind:value={repairComplaint} maxlength="200" disabled={state !== 'repair_input'} placeholder="e.g. “pull request” became “pool request”" spellcheck="false" autocomplete="off"></textarea>
+            {#if repairError}<span class="repair-inline-error">{repairError}</span>{/if}
+            {#if state !== 'repair_recording'}
+              <div class="repair-actions">
+                {#key state}
+                  <span class="repair-swap">
+                    {#if state === 'repair_input'}
+                      <button class="repair-primary" onclick={analyzeRepair} disabled={!repairComplaint.trim()}>Analyze</button>
+                    {:else if state === 'repair_processing'}
+                      <span class="repair-status"><span class="loading-spinner"></span>Diagnosing…</span>
+                    {:else}
+                      <span class="repair-status"><span class="loading-spinner"></span>Applying…</span>
+                    {/if}
+                  </span>
+                {/key}
+              </div>
+            {/if}
 
-  {:else if state === 'repair_error'}
-    <div class="pill repair-card repair-proposal" class:dying={dying} role="dialog" tabindex="-1" onkeydown={handleRepairKeydown}>
-      <div class="repair-form-head">
-        <span class="repair-label">Can't apply a fix</span>
-        <button class="hf-btn repair-close" onclick={cancelRepair} aria-label="Cancel">
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
-            <path d="M6 6l12 12M6 18 18 6"/>
-          </svg>
-        </button>
-      </div>
-      <span class="repair-error-text">{repairError || 'Repair could not be prepared'}</span>
-      <div class="repair-actions">
-        <button class="repair-primary" onclick={retryRepair} disabled={!repairComplaint.trim()}>Retry</button>
-      </div>
-    </div>
+          {:else if cardPhase === 'proposal'}
+            <div class="repair-form-head">
+              <span class="repair-label">Proposed repair</span>
+              <button class="hf-btn repair-close" onclick={cancelRepair} aria-label="Cancel">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+                  <path d="M6 6l12 12M6 18 18 6"/>
+                </svg>
+              </button>
+            </div>
+            <strong>{repairProposal?.summary}</strong>
+            <span class="repair-scope">{repairProposal?.scope}</span>
+            {#if repairError}<span class="repair-inline-error">{repairError}</span>{/if}
+            <div class="repair-actions">
+              <button class="repair-primary" onclick={applyRepair}>Apply</button>
+            </div>
 
-  {:else if state === 'repair_done'}
-    <div class="pill copied" class:dying={dying}>
-      <svg class="copied-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-        <polyline points="20 6 9 17 4 12"/>
-      </svg>
-      <span class="copied-text">Repair applied</span>
+          {:else}
+            <div class="repair-form-head">
+              <span class="repair-label">Can't apply a fix</span>
+              <button class="hf-btn repair-close" onclick={cancelRepair} aria-label="Cancel">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+                  <path d="M6 6l12 12M6 18 18 6"/>
+                </svg>
+              </button>
+            </div>
+            <span class="repair-error-text">{repairError || 'Repair could not be prepared'}</span>
+            <div class="repair-actions">
+              <button class="repair-primary" onclick={retryRepair} disabled={!repairComplaint.trim()}>Retry</button>
+            </div>
+          {/if}
+        </div>
+      {/key}
     </div>
-
   {:else if state === 'processing'}
     <div class="pill processing"
          class:from-rec={prevState === 'recording'}
@@ -1329,14 +1343,14 @@
       {/if}
     </div>
 
-  {:else if state === 'cancelled'}
-    <div class="pill cancelled" class:cancel-open={cancelOpen} class:dying={dying}>
+  {:else if isCancelLike(state)}
+    <div class="pill cancelled" class:interrupted={state === 'interrupted'} class:cancel-open={cancelOpen} class:dying={dying}>
       <button class="hf-btn cancel" onclick={dismissCancelled} aria-label="Dismiss">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
           <path d="M6 6l12 12M6 18 18 6"/>
         </svg>
       </button>
-      <span class="cancel-text">Cancelled</span>
+      <span class="cancel-text">{state === 'interrupted' ? 'Interrupted' : 'Cancelled'}</span>
       {#if showCancelBtn}
         <button class="hf-btn confirm" onclick={continueCancelled} aria-label="Undo — keep recording">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -1405,7 +1419,7 @@
       {/if}
       <div class="bars-hf">
         {#each barHeights as h, i (i)}
-          <div class="bar" style="height: {snap(h, dpr)}px"></div>
+          <div class="bar" style="height: {h}px"></div>
         {/each}
       </div>
       {#if showHfButtons}
@@ -1467,22 +1481,30 @@
     outline: none;
   }
 
+  /* Bottom-aligned, not centered: the native window is bottom-anchored and
+     only shrinks after ~100ms of quiet (see measureAndResize), so a centered
+     pill sits visibly high inside a still-oversized window and then teleports
+     down when the shrink lands — most obvious on the small "Repair applied"
+     capsule right after a tall proposal card. Aligned to the bottom with the
+     same 10px (PILL_PAD_H / 2) inset it had at rest, the pill stays put no
+     matter how much slack the window still has above it. */
   .wrap {
     width: 100vw; height: 100vh;
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     justify-content: center;
+    padding-bottom: 10px;
   }
 
   /* Measured wrapper — the backend sizes the native window to this element's
      size (see measureAndResize) so the transparent click-capture zone stays
-     as small as the visible content. Column layout: the profile label floats
+     as small as the visible content. Column layout: the context label floats
      above the capsule (centered) instead of pushing it off-center. */
   .pill-cluster {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 4px;
+    gap: 2px;
     /* containing block for .err-sizer, which must stay out of flow so it
        never contributes to the measured cluster size */
     position: relative;
@@ -1511,12 +1533,25 @@
   .pill-cluster.steady-width-hf {
     min-width: var(--hf-expanded-w, 132px);
   }
+  /* Same idea again for the repair card, which animates its own width/height
+     between stages: hold the measured *target* size (the card body's, known as
+     soon as the new stage mounts) so the native window makes one resize up
+     front instead of chasing the transition with a resize per frame — the
+     per-frame chase is what read as the card flickering while it scaled. */
+  .pill-cluster.steady-repair {
+    min-width: var(--repair-w, 0px);
+    min-height: var(--repair-h, 0px);
+    /* Bottom-pin the card inside that reserved box, matching the window's own
+       bottom anchor — while the card is still growing into a taller stage the
+       slack sits above it, so the card grows upward instead of sliding down. */
+    justify-content: flex-end;
+  }
 
-  /* Resolved tone profile, shown as a small floating tag above the pill so
-     the otherwise-invisible style setting stays legible without crowding or
-     offsetting the pill capsule itself. Fades in softly so its appearance
+  /* Resolved context, shown as a small floating tag above the pill so the
+     dictation's destination stays legible without crowding or offsetting
+     the pill capsule itself. Fades in softly so its appearance
      reads as the pill growing, not a new element popping in. */
-  .pill-profile {
+  .pill-context {
     font-size: 10.5px;
     font-weight: 500;
     letter-spacing: 0.02em;
@@ -1525,8 +1560,12 @@
     border-radius: 999px;
     padding: 2px 8px;
     white-space: nowrap;
+    /* Context names are user-authored and can run long — cap the chip so it
+       never widens the native window (which is sized to .pill-cluster). */
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
     text-shadow: 0 1px 2px rgba(0,0,0,0.35);
-    box-shadow: 0 2px 6px rgba(0,0,0,0.18);
     animation: chipIn 0.18s ease-out both;
   }
   @keyframes chipIn {
@@ -1556,18 +1595,50 @@
     height: auto;
     min-height: 34px;
     border-radius: 20px;
-    padding: 12px 14px;
-    gap: 8px;
+    /* Padding lives on .repair-body: the card is sized from the body's
+       measured box and clips it, so the two must not double up. */
+    padding: 0;
+    overflow: hidden;
     background: var(--pill-bg);
     color: var(--pill-fg);
-    box-shadow: 0 0 0 1px rgba(255,255,255,0.08) inset, 0 10px 28px rgba(0,0,0,0.38);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.08) inset;
+    transition: width 0.26s cubic-bezier(0.22, 1, 0.36, 1),
+                height 0.26s cubic-bezier(0.22, 1, 0.36, 1),
+                border-radius 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  /* flex: none — during the size transition the card is briefly narrower or
+     shorter than its content, and a shrinking flex item would squash the body
+     instead of letting the card clip it. */
+  .repair-body {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    width: 300px;
+    padding: 13px 14px 11px;
+    gap: 9px;
+    animation: bodyIn 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
   .feedback-card {
     width: auto;
     max-width: 260px;
-    justify-content: center;
-    padding: 10px 16px;
     border-radius: 999px;
+  }
+  .feedback-card .repair-body {
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    width: max-content;
+    max-width: 260px;
+    padding: 13px 16px;
+    gap: 7px;
+  }
+  /* Content swaps (stage buttons, an inline error appearing) fade in rather
+     than blinking into place mid-morph. */
+  .repair-swap { display: inline-flex; align-items: center; gap: 8px; animation: bodyIn 0.16s ease both; }
+  @keyframes bodyIn {
+    from { opacity: 0; transform: translateY(3px); }
+    to   { opacity: 1; transform: none; }
   }
   .feedback-card .repair-question {
     font-size: 11.5px;
@@ -1576,8 +1647,23 @@
     text-align: center;
     white-space: nowrap;
   }
+  /* The feedback toast follows the processing pill immediately (finalize.rs
+     hides it and shows feedback_prompt in the same call, with no gap) — but
+     they're different template branches, so there's no shared element for a
+     CSS width transition to run on. Without this, the card just popped in at
+     its own resting width (only pillIn's subtle scale softened it), which
+     read as an instant snap next to a short "Transcribing…"/"Cleaning…"
+     stage. Grow from processing's last width instead, same pattern as
+     processIn/loadingLocalIn above. */
+  .feedback-card.from-processing {
+    animation: feedbackFromProcessing 0.28s cubic-bezier(0.22, 1, 0.36, 1) backwards,
+               pillIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  @keyframes feedbackFromProcessing {
+    from { width: calc(var(--stage-w, 116px) + 24px); }
+  }
 
-  .repair-form, .repair-proposal { flex-direction: column; align-items: stretch; border-radius: 18px; padding: 13px 14px 11px; gap: 9px; }
+  .repair-form, .repair-proposal { border-radius: 18px; }
   .repair-form-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .repair-label {
     font-size: 10.5px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--pill-muted);
@@ -1606,7 +1692,7 @@
 
   .repair-status { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--pill-muted); }
   .repair-scope, .repair-inline-error { font-size: 10.5px; color: var(--pill-muted); }
-  .repair-inline-error { color: var(--pill-error-fg); white-space: normal; }
+  .repair-inline-error { color: var(--pill-error-fg); white-space: normal; animation: bodyIn 0.16s ease both; }
   .repair-proposal strong { font-size: 12.5px; font-weight: 600; line-height: 17px; white-space: normal; }
   .repair-error-text { font-size: 11.5px; font-weight: 400; line-height: 16px; color: var(--pill-fg); opacity: 0.85; white-space: normal; }
 
@@ -1617,7 +1703,8 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .repair-input, .repair-primary { transition: none; }
+    .repair-input, .repair-primary, .repair-card { transition: none; }
+    .repair-body, .repair-swap, .repair-inline-error { animation: none; }
   }
 
   /* Translate distances stay inside the window's vertical padding (PILL_PAD_H
@@ -1918,8 +2005,7 @@
     background: var(--pill-error-bg);
     color: var(--pill-error-fg);
     border-radius: 17px;
-    box-shadow: 0 0 0 1px var(--pill-error-border),
-                0 2px 8px rgba(0,0,0,0.32);
+    box-shadow: 0 0 0 1px var(--pill-error-border);
     overflow: hidden;
     /* No overshoot here — a bouncy curve makes the measured content
        transiently exceed its target mid-transition, which chases the native
@@ -2031,6 +2117,9 @@
     width: 158px;
     padding: 0 8px;
   }
+  .pill.cancelled.interrupted.cancel-open {
+    width: 172px;
+  }
   .cancel-text {
     font-size: 11.5px; font-weight: 500;
     white-space: nowrap; overflow: hidden;
@@ -2054,8 +2143,7 @@
     background: var(--pill-error-bg);
     color: var(--pill-error-fg);
     border-radius: 999px;
-    box-shadow: 0 0 0 1px var(--pill-error-border),
-                0 2px 8px rgba(0,0,0,0.32);
+    box-shadow: 0 0 0 1px var(--pill-error-border);
     width: 128px;
     overflow: hidden;
     /* No overshoot — see .pill.error's transition comment. */

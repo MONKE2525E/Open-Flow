@@ -35,6 +35,7 @@ desktop.ini
 # Test files - audio clip provided separately, not committed
 tests/smoke/*.wav
 tests/__pycache__/
+test-results/
 
 # AI Agent workspace
 .claude/
@@ -54,3 +55,4 @@ Agent-Skills/templates/
 worktrees/worktree-1/
 worktrees/worktree-2/
 worktrees/worktree-3/
+

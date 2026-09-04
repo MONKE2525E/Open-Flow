@@ -20,6 +20,10 @@ use super::*;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Insights {
+    /// `None` when the payload covers every context. When set, every
+    /// per-dictation figure is scoped to it; the lifetime counters called out
+    /// on `InsightsCleanup` are not.
+    pub context_id: Option<i64>,
     pub range_days: i64,
     pub generated_at: String,
     pub totals: InsightsTotals,
@@ -121,13 +125,13 @@ const MIN_WORD_CHARS: usize = 3;
 // vocabulary. Lowercase; `top`/`unique_words`/`avg_word_length` filter on it.
 const STOPWORDS: &[&str] = &[
     "a", "about", "after", "all", "also", "am", "an", "and", "any", "are", "as", "at", "be",
-    "because", "been", "before", "being", "but", "by", "could", "did", "do", "does", "for",
-    "from", "had", "has", "have", "he", "her", "hers", "him", "his", "how", "i", "if", "in",
-    "into", "is", "it", "its", "me", "more", "most", "my", "no", "not", "of", "off", "on",
-    "or", "our", "ours", "out", "over", "own", "said", "she", "so", "some", "than", "that",
-    "the", "their", "them", "then", "there", "these", "they", "this", "those", "through",
-    "to", "too", "under", "up", "us", "was", "we", "were", "what", "when", "where", "which",
-    "while", "who", "whom", "why", "will", "with", "would", "you", "your", "yours",
+    "because", "been", "before", "being", "but", "by", "could", "did", "do", "does", "for", "from",
+    "had", "has", "have", "he", "her", "hers", "him", "his", "how", "i", "if", "in", "into", "is",
+    "it", "its", "me", "more", "most", "my", "no", "not", "of", "off", "on", "or", "our", "ours",
+    "out", "over", "own", "said", "she", "so", "some", "than", "that", "the", "their", "them",
+    "then", "there", "these", "they", "this", "those", "through", "to", "too", "under", "up", "us",
+    "was", "we", "were", "what", "when", "where", "which", "while", "who", "whom", "why", "will",
+    "with", "would", "you", "your", "yours",
 ];
 
 fn is_stopword(word: &str) -> bool {
@@ -136,29 +140,43 @@ fn is_stopword(word: &str) -> bool {
 
 /// Aggregated insights for `days` (`0` = all time). A brand-new install with
 /// no transcriptions returns a fully-populated zero payload, never an error.
-pub fn query_insights(db: &Db, days: i64) -> Result<Insights> {
+/// Aggregates for `days` (`0` = all time), optionally narrowed to one context.
+///
+/// Every per-dictation figure honours `context_id`; the lifetime counters on
+/// `InsightsCleanup` (`dictionary_fixes`, `auto_learned_terms`, and therefore
+/// `edits_applied`) have no context dimension in the schema and stay global
+/// either way — the UI labels them as such.
+pub fn query_insights(db: &Db, days: i64, context_id: Option<i64>) -> Result<Insights> {
     let conn = lock_conn(db)?;
-    let (range_start, range_end) = range_bounds(&conn, days)?;
+    let (range_start, range_end) = range_bounds(&conn, days, context_id)?;
 
-    let totals = query_totals(&conn, &range_start, &range_end, days)?;
-    let daily = query_daily(&conn, &range_start, &range_end)?;
+    let totals = query_totals(&conn, &range_start, &range_end, days, context_id)?;
+    let daily = query_daily(&conn, &range_start, &range_end, context_id)?;
     let (streak_start, streak_end) = rolling_year_bounds(&conn)?;
-    let streak_daily = query_daily(&conn, &streak_start, &streak_end)?;
-    let (lifetime_streak_start, lifetime_streak_end) = range_bounds(&conn, 0)?;
-    let lifetime_streak_daily =
-        query_daily(&conn, &lifetime_streak_start, &lifetime_streak_end)?;
+    let streak_daily = query_daily(&conn, &streak_start, &streak_end, context_id)?;
+    let (lifetime_streak_start, lifetime_streak_end) = range_bounds(&conn, 0, context_id)?;
+    let lifetime_streak_daily = query_daily(
+        &conn,
+        &lifetime_streak_start,
+        &lifetime_streak_end,
+        context_id,
+    )?;
+    // Scoped too, so the heatmap can still tell "before this context existed"
+    // apart from "a day you didn't use it".
     let history_started_on = conn.query_row(
-        "SELECT date(MIN(created_at), 'localtime') FROM transcriptions",
-        [],
+        "SELECT date(MIN(created_at), 'localtime') FROM transcriptions
+         WHERE (?1 IS NULL OR context_id = ?1)",
+        params![context_id],
         |r| r.get(0),
     )?;
-    let hourly = query_hourly(&conn, &range_start, &range_end)?;
-    let providers = query_providers(&conn, &range_start, &range_end)?;
-    let cleanup = query_cleanup(&conn, &range_start, &range_end)?;
-    let words = query_words(&conn, &range_start, &range_end)?;
+    let hourly = query_hourly(&conn, &range_start, &range_end, context_id)?;
+    let providers = query_providers(&conn, &range_start, &range_end, context_id)?;
+    let cleanup = query_cleanup(&conn, &range_start, &range_end, context_id)?;
+    let words = query_words(&conn, &range_start, &range_end, context_id)?;
     let streak = compute_streak(&lifetime_streak_daily);
 
     Ok(Insights {
+        context_id,
         range_days: days,
         generated_at: Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
         totals,
@@ -221,9 +239,8 @@ pub(crate) fn build_api_calls(
     clean: &str,
 ) -> Vec<ApiCall> {
     let parts = parse_api_usage(api_used);
-    let mut calls = Vec::with_capacity(
-        parts.transcription_models.len() + parts.cleanup_models.len(),
-    );
+    let mut calls =
+        Vec::with_capacity(parts.transcription_models.len() + parts.cleanup_models.len());
     for (provider, model) in parts.transcription_models {
         calls.push(ApiCall {
             transcription_id,
@@ -308,7 +325,7 @@ fn parse_api_usage(api_used: &str) -> ApiUsageParts {
 /// Local calendar-day bounds of the requested range, as `"YYYY-MM-DD"`.
 /// `days > 0` spans the last `days` calendar days ending today; `days == 0`
 /// spans the first recorded transcription through today.
-fn range_bounds(conn: &Connection, days: i64) -> Result<(String, String)> {
+fn range_bounds(conn: &Connection, days: i64, context_id: Option<i64>) -> Result<(String, String)> {
     let today: String = conn.query_row("SELECT date('now', 'localtime')", [], |r| r.get(0))?;
     let start = if days > 0 {
         let n = (days - 1).max(0);
@@ -320,10 +337,11 @@ fn range_bounds(conn: &Connection, days: i64) -> Result<(String, String)> {
     } else {
         conn.query_row(
             "SELECT COALESCE(
-               date((SELECT MIN(created_at) FROM transcriptions), 'localtime'),
+               date((SELECT MIN(created_at) FROM transcriptions
+                     WHERE (?1 IS NULL OR context_id = ?1)), 'localtime'),
                date('now', 'localtime')
              )",
-            [],
+            params![context_id],
             |r| r.get(0),
         )?
     };
@@ -346,13 +364,15 @@ fn query_totals(
     range_start: &str,
     range_end: &str,
     days: i64,
+    context_id: Option<i64>,
 ) -> Result<InsightsTotals> {
     let (total_transcriptions, words_in_range, total_speaking_ms): (i64, i64, i64) = conn
         .query_row(
             "SELECT COUNT(*), COALESCE(SUM(words), 0), COALESCE(SUM(duration_ms), 0)
              FROM transcriptions
-             WHERE date(created_at, 'localtime') BETWEEN ?1 AND ?2",
-            params![range_start, range_end],
+             WHERE date(created_at, 'localtime') BETWEEN ?1 AND ?2
+               AND (?3 IS NULL OR context_id = ?3)",
+            params![range_start, range_end, context_id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
 
@@ -364,8 +384,9 @@ fn query_totals(
         "SELECT COALESCE(AVG(CAST(spoken_words AS REAL) * 60000.0 / duration_ms), 0.0)
          FROM transcriptions
          WHERE date(created_at, 'localtime') BETWEEN ?1 AND ?2
-           AND duration_ms > 0 AND spoken_words > 0",
-        params![range_start, range_end],
+           AND duration_ms > 0 AND spoken_words > 0
+           AND (?3 IS NULL OR context_id = ?3)",
+        params![range_start, range_end, context_id],
         |r| r.get(0),
     )?;
 
@@ -373,16 +394,30 @@ fn query_totals(
         "SELECT COALESCE(CAST(MAX(CAST(spoken_words AS REAL) * 60000.0 / duration_ms) AS INTEGER), 0)
          FROM transcriptions
          WHERE date(created_at, 'localtime') BETWEEN ?1 AND ?2
-           AND duration_ms > 0 AND spoken_words > 0",
-        params![range_start, range_end],
+           AND duration_ms > 0 AND spoken_words > 0
+           AND (?3 IS NULL OR context_id = ?3)",
+        params![range_start, range_end, context_id],
         |r| r.get(0),
     )?;
 
-    let total_words: i64 = conn.query_row(
-        "SELECT COALESCE((SELECT total_words FROM lifetime_stats WHERE id = 1), 0)",
-        [],
-        |r| r.get(0),
-    )?;
+    let total_words: i64 = match context_id {
+        None => conn.query_row(
+            "SELECT COALESCE((SELECT total_words FROM lifetime_stats WHERE id = 1), 0)
+                  + COALESCE((SELECT SUM(total_words) FROM sync_remote_stats), 0)",
+            [],
+            |r| r.get(0),
+        )?,
+        // lifetime_stats is a global counter with no context dimension, so a
+        // scoped run sums the context's own history rather than reporting a
+        // number the filter plainly does not apply to. It can read lower than
+        // the unscoped lifetime figure, which never shrinks with retention
+        // pruning — that difference is real, not a bug.
+        Some(id) => conn.query_row(
+            "SELECT COALESCE(SUM(words), 0) FROM transcriptions WHERE context_id = ?1",
+            params![id],
+            |r| r.get(0),
+        )?,
+    };
 
     let words_prev_range: i64 = if days > 0 {
         let prev_start = format!("-{} days", (2 * days - 1).max(1));
@@ -391,8 +426,9 @@ fn query_totals(
             "SELECT COALESCE(SUM(words), 0)
              FROM transcriptions
              WHERE date(created_at, 'localtime') BETWEEN date('now', 'localtime', ?1)
-                                                   AND date('now', 'localtime', ?2)",
-            params![prev_start, prev_end],
+                                                   AND date('now', 'localtime', ?2)
+               AND (?3 IS NULL OR context_id = ?3)",
+            params![prev_start, prev_end, context_id],
             |r| r.get(0),
         )?
     } else {
@@ -422,6 +458,7 @@ fn query_daily(
     conn: &Connection,
     range_start: &str,
     range_end: &str,
+    context_id: Option<i64>,
 ) -> Result<Vec<InsightsDay>> {
     let mut per_day: HashMap<String, (i64, i64, i64)> = HashMap::new();
     {
@@ -429,12 +466,17 @@ fn query_daily(
             "SELECT date(created_at, 'localtime'), SUM(words), COUNT(*), SUM(duration_ms)
              FROM transcriptions
              WHERE date(created_at, 'localtime') BETWEEN ?1 AND ?2
+               AND (?3 IS NULL OR context_id = ?3)
              GROUP BY 1",
         )?;
-        let rows = stmt.query_map(params![range_start, range_end], |r| {
+        let rows = stmt.query_map(params![range_start, range_end, context_id], |r| {
             Ok((
                 r.get::<_, String>(0)?,
-                (r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?),
+                (
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                ),
             ))
         })?;
         for row in rows {
@@ -455,8 +497,7 @@ fn query_daily(
     let mut current = start;
     loop {
         let day = current.format("%Y-%m-%d").to_string();
-        let (words, transcriptions, speaking_ms) =
-            per_day.get(&day).copied().unwrap_or((0, 0, 0));
+        let (words, transcriptions, speaking_ms) = per_day.get(&day).copied().unwrap_or((0, 0, 0));
         daily.push(InsightsDay {
             day,
             words,
@@ -475,15 +516,21 @@ fn query_daily(
 }
 
 /// Words per hour-of-day, local time; exactly 24 entries, zeros included.
-fn query_hourly(conn: &Connection, range_start: &str, range_end: &str) -> Result<Vec<i64>> {
+fn query_hourly(
+    conn: &Connection,
+    range_start: &str,
+    range_end: &str,
+    context_id: Option<i64>,
+) -> Result<Vec<i64>> {
     let mut hourly = vec![0i64; 24];
     let mut stmt = conn.prepare(
         "SELECT CAST(strftime('%H', created_at, 'localtime') AS INTEGER), SUM(words)
          FROM transcriptions
          WHERE date(created_at, 'localtime') BETWEEN ?1 AND ?2
+           AND (?3 IS NULL OR context_id = ?3)
          GROUP BY 1",
     )?;
-    let rows = stmt.query_map(params![range_start, range_end], |r| {
+    let rows = stmt.query_map(params![range_start, range_end, context_id], |r| {
         Ok((r.get::<_, usize>(0)?, r.get::<_, i64>(1)?))
     })?;
     for row in rows {
@@ -501,18 +548,24 @@ fn query_providers(
     conn: &Connection,
     range_start: &str,
     range_end: &str,
+    context_id: Option<i64>,
 ) -> Result<Vec<InsightsProviderUsage>> {
+    // api_calls has no context of its own; it inherits the one recorded on the
+    // dictation that produced the call. LEFT JOIN so an unscoped run still
+    // counts calls whose transcription has since been pruned.
     let mut stmt = conn.prepare(
-        "SELECT model, provider, task, COUNT(*),
-                COALESCE(SUM(audio_ms), 0),
-                COALESCE(SUM(input_chars), 0),
-                COALESCE(SUM(output_chars), 0)
-         FROM api_calls
-         WHERE date(created_at, 'localtime') BETWEEN ?1 AND ?2
-         GROUP BY model, provider, task
-         ORDER BY COUNT(*) DESC, model ASC",
+        "SELECT a.model, a.provider, a.task, COUNT(*),
+                COALESCE(SUM(a.audio_ms), 0),
+                COALESCE(SUM(a.input_chars), 0),
+                COALESCE(SUM(a.output_chars), 0)
+         FROM api_calls a
+         LEFT JOIN transcriptions t ON t.id = a.transcription_id
+         WHERE date(a.created_at, 'localtime') BETWEEN ?1 AND ?2
+           AND (?3 IS NULL OR t.context_id = ?3)
+         GROUP BY a.model, a.provider, a.task
+         ORDER BY COUNT(*) DESC, a.model ASC",
     )?;
-    let rows = stmt.query_map(params![range_start, range_end], |r| {
+    let rows = stmt.query_map(params![range_start, range_end, context_id], |r| {
         Ok(InsightsProviderUsage {
             model: r.get(0)?,
             provider: r.get(1)?,
@@ -530,6 +583,7 @@ fn query_cleanup(
     conn: &Connection,
     range_start: &str,
     range_end: &str,
+    context_id: Option<i64>,
 ) -> Result<InsightsCleanup> {
     // raw/clean word counts are range-scoped from the transcriptions rows we
     // already load for the vocabulary stats.
@@ -537,9 +591,10 @@ fn query_cleanup(
         let mut stmt = conn.prepare(
             "SELECT clean_text, COALESCE(spoken_words, words)
              FROM transcriptions
-             WHERE date(created_at, 'localtime') BETWEEN ?1 AND ?2",
+             WHERE date(created_at, 'localtime') BETWEEN ?1 AND ?2
+               AND (?3 IS NULL OR context_id = ?3)",
         )?;
-        let rows = stmt.query_map(params![range_start, range_end], |r| {
+        let rows = stmt.query_map(params![range_start, range_end, context_id], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
         })?;
         let mut raw = 0i64;
@@ -552,11 +607,19 @@ fn query_cleanup(
         (raw, clean)
     };
 
-    let dictionary_fixes: i64 = conn.query_row(
-        "SELECT COALESCE((SELECT dictionary_fixes FROM lifetime_stats WHERE id = 1), 0)",
-        [],
-        |r| r.get(0),
-    )?;
+    let dictionary_fixes: i64 = match context_id {
+        None => conn.query_row(
+            "SELECT COALESCE((SELECT dictionary_fixes FROM lifetime_stats WHERE id = 1), 0)
+                  + COALESCE((SELECT SUM(dictionary_fixes) FROM sync_remote_stats), 0)",
+            [],
+            |r| r.get(0),
+        )?,
+        Some(_) => conn.query_row(
+            "SELECT COALESCE((SELECT dictionary_fixes FROM lifetime_stats WHERE id = 1), 0)",
+            [],
+            |r| r.get(0),
+        )?,
+    };
     let auto_learned_terms: i64 = conn.query_row(
         "SELECT COUNT(*) FROM dictionary WHERE auto_learned = 1",
         [],
@@ -581,12 +644,16 @@ fn query_words(
     conn: &Connection,
     range_start: &str,
     range_end: &str,
+    context_id: Option<i64>,
 ) -> Result<InsightsWords> {
     let mut stmt = conn.prepare(
         "SELECT clean_text FROM transcriptions
-         WHERE date(created_at, 'localtime') BETWEEN ?1 AND ?2",
+         WHERE date(created_at, 'localtime') BETWEEN ?1 AND ?2
+           AND (?3 IS NULL OR context_id = ?3)",
     )?;
-    let rows = stmt.query_map(params![range_start, range_end], |r| r.get::<_, String>(0))?;
+    let rows = stmt.query_map(params![range_start, range_end, context_id], |r| {
+        r.get::<_, String>(0)
+    })?;
 
     let mut counts: HashMap<String, i64> = HashMap::new();
     let mut longest: Option<String> = None;
@@ -743,8 +810,17 @@ mod tests {
     }
 
     fn insert_on_day(db: &Db, days_ago: i64, text: &str, words: i64, duration_ms: i64) -> i64 {
-        let entry = insert_transcription_returning(db, text, text, words, duration_ms, "groq/whisper-large-v3-turbo", None)
-            .expect("insert transcription");
+        let entry = insert_transcription_returning(
+            db,
+            text,
+            text,
+            words,
+            duration_ms,
+            "groq/whisper-large-v3-turbo",
+            None,
+            None,
+        )
+        .expect("insert transcription");
         {
             let conn = lock_conn(db).expect("lock");
             conn.execute(
@@ -760,10 +836,74 @@ mod tests {
         insights.daily.iter().map(|d| d.day.clone()).collect()
     }
 
+    fn set_context(db: &Db, transcription_id: i64, context_id: i64) {
+        let conn = lock_conn(db).expect("lock");
+        conn.execute(
+            "UPDATE transcriptions SET context_id = ?1 WHERE id = ?2",
+            params![context_id, transcription_id],
+        )
+        .expect("set context");
+    }
+
+    #[test]
+    fn context_filter_scopes_per_dictation_figures_but_not_lifetime_counters() {
+        let db = test_db();
+        let work = insert_context_returning(&db, "Work", None, None, None, None, false)
+            .expect("context")
+            .id;
+
+        // 120 wpm, attributed to Work.
+        let a = insert_on_day(&db, 1, "alpha bravo charlie delta", 4, 2_000);
+        set_context(&db, a, work);
+        // 60 wpm, attributed to Work.
+        let b = insert_on_day(&db, 2, "echo foxtrot", 2, 2_000);
+        set_context(&db, b, work);
+        // Another context entirely, plus one pre-v18 row with no context at all.
+        let other = insert_on_day(&db, 1, "golf hotel india juliet kilo", 5, 1_000);
+        set_context(&db, other, 999);
+        insert_on_day(&db, 1, "unattributed words here", 3, 1_000);
+
+        let all = query_insights(&db, 30, None).expect("unscoped");
+        assert_eq!(all.context_id, None);
+        assert_eq!(all.totals.total_transcriptions, 4);
+        assert_eq!(all.totals.words_in_range, 14);
+
+        let scoped = query_insights(&db, 30, Some(work)).expect("scoped");
+        assert_eq!(scoped.context_id, Some(work));
+        assert_eq!(scoped.totals.total_transcriptions, 2);
+        assert_eq!(scoped.totals.words_in_range, 6);
+        // Average of each clip's own wpm: (120 + 60) / 2.
+        assert!(
+            (scoped.totals.avg_wpm - 90.0).abs() < 0.001,
+            "{}",
+            scoped.totals.avg_wpm
+        );
+        assert_eq!(scoped.totals.best_wpm, 120);
+        // Daily buckets only carry this context's days.
+        let scoped_words: i64 = scoped.daily.iter().map(|d| d.words).sum();
+        assert_eq!(scoped_words, 6);
+        // Vocabulary is scoped too — the other context's words must not leak in.
+        assert!(scoped.words.top.iter().all(|w| w.word != "golf"));
+        assert!(all.words.top.iter().any(|w| w.word == "golf"));
+
+        // Lifetime counters have no context dimension and stay global.
+        assert_eq!(
+            scoped.cleanup.dictionary_fixes,
+            all.cleanup.dictionary_fixes
+        );
+        assert_eq!(
+            scoped.cleanup.auto_learned_terms,
+            all.cleanup.auto_learned_terms
+        );
+        // total_words falls back to the context's own history rather than the
+        // global lifetime figure.
+        assert_eq!(scoped.totals.total_words, 6);
+    }
+
     #[test]
     fn empty_db_returns_zero_payload_not_an_error() {
         let db = test_db();
-        let insights = query_insights(&db, 30).expect("insights on empty db");
+        let insights = query_insights(&db, 30, None).expect("insights on empty db");
 
         assert_eq!(insights.range_days, 30);
         assert_eq!(insights.totals.total_words, 0);
@@ -802,7 +942,7 @@ mod tests {
         insert_on_day(&db, 5, "hello world", 2, 1000);
         insert_on_day(&db, 2, "more dictation", 2, 1000);
 
-        let insights = query_insights(&db, 0).expect("insights all time");
+        let insights = query_insights(&db, 0, None).expect("insights all time");
         let expected = (0..=5).rev().map(local_day_string).collect::<Vec<_>>();
         assert_eq!(days_in(&insights), expected);
         assert_eq!(insights.range_days, 0);
@@ -816,7 +956,7 @@ mod tests {
         insert_on_day(&db, 3, "day one", 2, 1000);
         insert_on_day(&db, 1, "day three", 3, 1500);
 
-        let insights = query_insights(&db, 7).expect("insights");
+        let insights = query_insights(&db, 7, None).expect("insights");
         let expected = (0..7).rev().map(local_day_string).collect::<Vec<_>>();
         assert_eq!(days_in(&insights), expected);
 
@@ -843,9 +983,17 @@ mod tests {
         let db = test_db();
         insert_on_day(&db, 2, "recent activity", 3, 1_500);
 
-        let insights = query_insights(&db, 7).expect("insights");
-        assert_eq!(insights.daily.len(), 7, "page data respects the selected range");
-        assert_eq!(insights.streak_daily.len(), 365, "one compact year is retained");
+        let insights = query_insights(&db, 7, None).expect("insights");
+        assert_eq!(
+            insights.daily.len(),
+            7,
+            "page data respects the selected range"
+        );
+        assert_eq!(
+            insights.streak_daily.len(),
+            365,
+            "one compact year is retained"
+        );
         assert_eq!(
             insights.streak_daily.last().map(|d| d.day.as_str()),
             Some(local_day_string(0).as_str()),
@@ -860,7 +1008,7 @@ mod tests {
         insert_on_day(&db, 5, "run two", 2, 1000);
         insert_on_day(&db, 4, "run three", 4, 2000);
 
-        let insights = query_insights(&db, 7).expect("insights");
+        let insights = query_insights(&db, 7, None).expect("insights");
 
         assert_eq!(insights.streak.longest_days, 3);
         assert_eq!(
@@ -872,7 +1020,10 @@ mod tests {
             Some(local_day_string(4).as_str())
         );
         assert_eq!(insights.streak.longest_words, 8);
-        assert_eq!(insights.streak.current_days, 0, "gap at the range end breaks the current streak");
+        assert_eq!(
+            insights.streak.current_days, 0,
+            "gap at the range end breaks the current streak"
+        );
         assert_eq!(insights.streak.active_days, 3);
     }
 
@@ -884,7 +1035,7 @@ mod tests {
         insert_on_day(&db, 1, "yesterday", 2, 1000);
         insert_on_day(&db, 2, "two days ago", 2, 1000);
 
-        let insights = query_insights(&db, 7).expect("insights");
+        let insights = query_insights(&db, 7, None).expect("insights");
         assert_eq!(insights.streak.current_days, 2);
     }
 
@@ -894,7 +1045,7 @@ mod tests {
         // Today and yesterday silent; the last activity is two days back.
         insert_on_day(&db, 2, "two days ago", 2, 1000);
 
-        let insights = query_insights(&db, 7).expect("insights");
+        let insights = query_insights(&db, 7, None).expect("insights");
         assert_eq!(insights.streak.current_days, 0);
     }
 
@@ -906,7 +1057,7 @@ mod tests {
         insert_on_day(&db, 0, "today", 2, 1000);
         insert_on_day(&db, 2, "two days ago", 2, 1000);
 
-        let insights = query_insights(&db, 7).expect("insights");
+        let insights = query_insights(&db, 7, None).expect("insights");
         assert_eq!(insights.streak.current_days, 1);
     }
 
@@ -922,6 +1073,7 @@ mod tests {
             1000,
             "groq/whisper-large-v3-turbo",
             None,
+            None,
         )
         .expect("insert transcription");
         let created_at = utc_for_local_day(2, 23, 50);
@@ -934,7 +1086,7 @@ mod tests {
             .expect("set boundary timestamp");
         }
 
-        let insights = query_insights(&db, 0).expect("insights");
+        let insights = query_insights(&db, 0, None).expect("insights");
 
         let expected_local_day = local_day_string(2);
         let bucket = insights
@@ -950,7 +1102,10 @@ mod tests {
         let utc_day = created_at[..10].to_string();
         if utc_day != expected_local_day {
             assert!(
-                !insights.daily.iter().any(|d| d.day == utc_day && d.words > 0),
+                !insights
+                    .daily
+                    .iter()
+                    .any(|d| d.day == utc_day && d.words > 0),
                 "must bucket to the local day, not the UTC one"
             );
         }
@@ -960,10 +1115,19 @@ mod tests {
     fn top_words_exclude_stopwords_and_sort_descending() {
         let db = test_db();
         let text = "the the the and and and apple banana banana cherry the";
-        insert_transcription_returning(&db, text, text, 11, 1000, "groq/whisper-large-v3-turbo", None)
-            .expect("insert transcription");
+        insert_transcription_returning(
+            &db,
+            text,
+            text,
+            11,
+            1000,
+            "groq/whisper-large-v3-turbo",
+            None,
+            None,
+        )
+        .expect("insert transcription");
 
-        let insights = query_insights(&db, 7).expect("insights");
+        let insights = query_insights(&db, 7, None).expect("insights");
 
         let top = &insights.words.top;
         assert_eq!(top.len(), 3);
@@ -986,17 +1150,27 @@ mod tests {
     fn top_words_strip_punctuation_and_drop_short_tokens() {
         let db = test_db();
         let text = "React, Vue! React? Vue. Svelte. i a um go";
-        insert_transcription_returning(&db, text, text, 10, 1000, "groq/whisper-large-v3-turbo", None)
-            .expect("insert transcription");
+        insert_transcription_returning(
+            &db,
+            text,
+            text,
+            10,
+            1000,
+            "groq/whisper-large-v3-turbo",
+            None,
+            None,
+        )
+        .expect("insert transcription");
 
-        let insights = query_insights(&db, 7).expect("insights");
+        let insights = query_insights(&db, 7, None).expect("insights");
 
         let top = &insights.words.top;
         assert!(top.iter().any(|w| w.word == "react" && w.count == 2));
         assert!(top.iter().any(|w| w.word == "vue" && w.count == 2));
         assert!(top.iter().any(|w| w.word == "svelte" && w.count == 1));
         assert!(
-            !top.iter().any(|w| w.word == "i" || w.word == "a" || w.word == "um"),
+            !top.iter()
+                .any(|w| w.word == "i" || w.word == "a" || w.word == "um"),
             "sub-3-char and stopword tokens must be excluded"
         );
     }
@@ -1007,7 +1181,14 @@ mod tests {
         let id = insert_on_day(&db, 1, "cost test", 2, 1000);
         let created_at = utc_for_local_day(1, 10, 0);
 
-        let calls = build_api_calls(id, &created_at, "groq/whisper-large-v3-turbo;cleanup=groq/llama-3.3-70b-versatile", 1234, "raw words", "clean words");
+        let calls = build_api_calls(
+            id,
+            &created_at,
+            "groq/whisper-large-v3-turbo;cleanup=groq/llama-3.3-70b-versatile",
+            1234,
+            "raw words",
+            "clean words",
+        );
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].task, "transcription");
         assert_eq!(calls[0].audio_ms, 1234);
@@ -1017,7 +1198,7 @@ mod tests {
 
         insert_api_calls(&db, &calls).expect("insert api calls");
 
-        let insights = query_insights(&db, 7).expect("insights");
+        let insights = query_insights(&db, 7, None).expect("insights");
         assert_eq!(insights.providers.len(), 2);
         let tx = insights
             .providers
@@ -1042,7 +1223,7 @@ mod tests {
     #[test]
     fn serde_field_names_match_the_frontend_contract_exactly() {
         let db = test_db();
-        let insights = query_insights(&db, 30).expect("insights");
+        let insights = query_insights(&db, 30, None).expect("insights");
         let json = serde_json::to_value(&insights).expect("serialize insights");
         let object = json.as_object().expect("object");
 
@@ -1072,7 +1253,10 @@ mod tests {
             "words_prev_range",
         ] {
             assert!(
-                object["totals"].as_object().expect("totals").contains_key(key),
+                object["totals"]
+                    .as_object()
+                    .expect("totals")
+                    .contains_key(key),
                 "missing totals key: {key}"
             );
         }
@@ -1085,7 +1269,10 @@ mod tests {
             "active_days",
         ] {
             assert!(
-                object["streak"].as_object().expect("streak").contains_key(key),
+                object["streak"]
+                    .as_object()
+                    .expect("streak")
+                    .contains_key(key),
                 "missing streak key: {key}"
             );
         }
@@ -1106,8 +1293,15 @@ mod tests {
             24,
             "hourly must have exactly 24 entries"
         );
-        for key in ["model", "provider", "task", "calls", "audio_ms", "input_chars", "output_chars"]
-        {
+        for key in [
+            "model",
+            "provider",
+            "task",
+            "calls",
+            "audio_ms",
+            "input_chars",
+            "output_chars",
+        ] {
             assert!(
                 object["providers"]
                     .as_array()
@@ -1119,15 +1313,27 @@ mod tests {
                 "missing providers key: {key}"
             );
         }
-        for key in ["raw_words", "clean_words", "edits_applied", "dictionary_fixes", "auto_learned_terms"] {
+        for key in [
+            "raw_words",
+            "clean_words",
+            "edits_applied",
+            "dictionary_fixes",
+            "auto_learned_terms",
+        ] {
             assert!(
-                object["cleanup"].as_object().expect("cleanup").contains_key(key),
+                object["cleanup"]
+                    .as_object()
+                    .expect("cleanup")
+                    .contains_key(key),
                 "missing cleanup key: {key}"
             );
         }
         for key in ["top", "unique_words", "longest_word", "avg_word_length"] {
             assert!(
-                object["words"].as_object().expect("words").contains_key(key),
+                object["words"]
+                    .as_object()
+                    .expect("words")
+                    .contains_key(key),
                 "missing words key: {key}"
             );
         }
@@ -1144,7 +1350,7 @@ mod tests {
         insert_on_day(&db, 2, "also two", 2, 2000);
 
         let stats = query_stats(&db).expect("stats");
-        let insights = query_insights(&db, 0).expect("insights");
+        let insights = query_insights(&db, 0, None).expect("insights");
 
         assert!(stats.avg_wpm > 0.0);
         assert!(
@@ -1166,12 +1372,12 @@ mod tests {
         }
         increment_lifetime_dictionary_fixes(&db, 3).expect("increment");
 
-        let insights = query_insights(&db, 7).expect("insights");
+        let insights = query_insights(&db, 7, None).expect("insights");
         assert_eq!(insights.cleanup.dictionary_fixes, 3);
         assert_eq!(insights.cleanup.edits_applied, 10);
 
         increment_lifetime_dictionary_fixes(&db, 2).expect("increment again");
-        let insights = query_insights(&db, 7).expect("insights");
+        let insights = query_insights(&db, 7, None).expect("insights");
         assert_eq!(insights.cleanup.dictionary_fixes, 5);
         assert_eq!(insights.cleanup.edits_applied, 12);
     }

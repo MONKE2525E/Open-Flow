@@ -115,7 +115,7 @@
             <svg class="ui-chevron" class:open={appDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
           </button>
           {#if appDropdownOpen}
-            <div id="history-app-menu" class="ui-dropdown-menu history-app-menu scroll-styled" role="listbox" aria-label="Filter history by app" transition:scale={{ duration: motionMs(MOTION_MS.fast), start: 0.96, opacity: 0 }}>
+            <div id="history-app-menu" class="ui-dropdown-menu history-app-menu scroll-styled" role="listbox" aria-label="Filter history by app" out:scale={{ duration: motionMs(MOTION_MS.fast), start: 0.96, opacity: 0 }}>
               <button class="ui-dropdown-option" class:active={!appFilter} role="option" aria-selected={!appFilter} onclick={() => selectAppFilter(null)}>All apps</button>
               {#each apps as app}
                 <button class="ui-dropdown-option" class:active={appFilter === app} role="option" aria-selected={appFilter === app} onclick={() => selectAppFilter(app)}>{formatAppLabel(app)}</button>
@@ -222,9 +222,17 @@
   .history-app-trigger[aria-expanded='true'] { background: var(--control-hover); border-color: transparent; }
 
   .history-app-menu { width: max-content; min-width: 180px; max-width: 280px; }
-
+  /* WebView2 reserves a native scrollbar gutter even while the custom thumb is
+     transparent. That leaves the selected row looking clipped on Windows.
+     The menu remains wheel/trackpad-scrollable without the gutter. */
+  :global(.app-windows) .history-app-menu {
+    scrollbar-width: none;
+  }
+  :global(.app-windows) .history-app-menu::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
   .clear-filters-wrap { display: flex; align-items: center; height: 100%; flex-shrink: 0; }
-
   .clear-filters-btn {
     height: 100%;
     padding: 0 12px;
@@ -233,8 +241,21 @@
   }
 
   .clear-filters-btn:hover { background: var(--control-hover); border-color: transparent; }
-
   @media (max-width: 560px) {
     .history-search-group.expanded { flex-basis: 100%; max-width: none; }
+  }
+
+  /* A compositor-backed reveal keeps the menu animation visible in WebKit,
+     including the macOS Tauri window. The Svelte transition still provides
+     the matching exit animation. */
+  .history-app-menu { animation: history-app-menu-enter var(--ui-duration-fast) var(--ui-ease-out); transform-origin: top right; will-change: opacity, transform; }
+
+  @keyframes history-app-menu-enter {
+    from { opacity: 0; transform: translate3d(0, -6px, 0) scale(0.98); }
+    to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .history-app-menu { animation: none; will-change: auto; }
   }
 </style>

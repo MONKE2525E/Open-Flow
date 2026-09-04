@@ -60,12 +60,20 @@ function Convert-HexColor($hex) {
   )
 }
 
+# Renders at `size` by drawing into a much larger buffer and box-filtering down.
+# Rasterising small frames directly let each one round differently: the 16px and
+# 24px frames came out 68.8% and 70.8% wide against a 65.6% target, so the icon
+# visibly changed proportions between shell contexts. Supersampling keeps every
+# frame on the same normalized geometry.
 function New-IconBitmap($size, $rects) {
-  $bmp = New-Object System.Drawing.Bitmap($size, $size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
-  $g = [System.Drawing.Graphics]::FromImage($bmp)
+  # 8x oversample, but always rasterise at >= 512 so the rounded corners and bar
+  # radii are resolved on the same grid the source SVG was authored against.
+  $ss = [math]::Max($size * 8, 512)
+  $big = New-Object System.Drawing.Bitmap($ss, $ss, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+  $g = [System.Drawing.Graphics]::FromImage($big)
   $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
   $g.Clear([System.Drawing.Color]::Transparent)
-  $scale = $size / 512.0
+  $scale = $ss / 512.0
 
   foreach ($rect in $rects) {
     $path = New-Object System.Drawing.Drawing2D.GraphicsPath
@@ -78,8 +86,25 @@ function New-IconBitmap($size, $rects) {
     $brush.Dispose()
     $path.Dispose()
   }
-
   $g.Dispose()
+
+  if ($ss -eq $size) { return $big }
+
+  $bmp = New-Object System.Drawing.Bitmap($size, $size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+  $dg = [System.Drawing.Graphics]::FromImage($bmp)
+  $dg.Clear([System.Drawing.Color]::Transparent)
+  $dg.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+  $dg.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+  $dg.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+  # Draw into an explicit rectangle with a wrap-mode clamp so the bicubic kernel
+  # does not sample transparent pixels from beyond the edge and pull in a halo.
+  $attr = New-Object System.Drawing.Imaging.ImageAttributes
+  $attr.SetWrapMode([System.Drawing.Drawing2D.WrapMode]::TileFlipXY)
+  $dest = New-Object System.Drawing.Rectangle 0, 0, $size, $size
+  $dg.DrawImage($big, $dest, 0, 0, $ss, $ss, [System.Drawing.GraphicsUnit]::Pixel, $attr)
+  $attr.Dispose()
+  $dg.Dispose()
+  $big.Dispose()
   return $bmp
 }
 
@@ -133,6 +158,8 @@ Save-Png (New-IconBitmap 32  $rects) (Join-Path $iconDir '32x32.png')
 Save-Png (New-IconBitmap 64  $rects) (Join-Path $iconDir '64x64.png')
 Save-Png (New-IconBitmap 128 $rects) (Join-Path $iconDir '128x128.png')
 Save-Png (New-IconBitmap 256 $rects) (Join-Path $iconDir '128x128@2x.png')
-New-IconFile (Join-Path $iconDir 'icon.ico') @(16, 24, 32, 48, 64, 256) $rects
+# 20px is the shell's small-icon size at 125% scaling; without it Windows
+# downsamples the 24px frame and the bars lose a pixel of weight.
+New-IconFile (Join-Path $iconDir 'icon.ico') @(16, 20, 24, 32, 48, 64, 256) $rects
 
 Write-Output 'done'

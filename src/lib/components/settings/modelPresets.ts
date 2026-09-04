@@ -106,7 +106,7 @@ function ramNeededMb(sizesMb: number[]): number {
   return Math.round(total * RAM_FACTOR) + OS_HEADROOM_MB;
 }
 
-function fits(hardware: Hardware, sizesMb: number[]): boolean {
+export function fitsHardware(hardware: Hardware, sizesMb: number[]): boolean {
   return hardware.unknown || hardware.totalRamMb >= ramNeededMb(sizesMb);
 }
 
@@ -192,7 +192,7 @@ function localTierPreset(tier: LocalTier, idPrefix: string): Preset {
 // The floor: transcription with no cleanup, for machines too small for a local
 // LLM (or with no key to run cloud cleanup). Uses the lightest STT that fits.
 function transcriptionOnlyPreset(hardware: Hardware): Preset {
-  const stt = fits(hardware, [STT_PARAKEET_V3.sizeMb]) ? STT_PARAKEET_V3 : STT_MOONSHINE_TINY;
+  const stt = fitsHardware(hardware, [STT_PARAKEET_V3.sizeMb]) ? STT_PARAKEET_V3 : STT_MOONSHINE_TINY;
   return {
     id: 'local-transcription-only',
     kind: 'preset',
@@ -377,7 +377,7 @@ function cloudTarget(opts: {
 }
 
 function buildLocalOnlyPresets(hardware: Hardware): Preset[] {
-  const viable = LOCAL_TIERS.filter((tier) => fits(hardware, localTierSizes(tier)));
+  const viable = LOCAL_TIERS.filter((tier) => fitsHardware(hardware, localTierSizes(tier)));
   if (viable.length === 0) {
     return [transcriptionOnlyPreset(hardware)];
   }
@@ -387,7 +387,7 @@ function buildLocalOnlyPresets(hardware: Hardware): Preset[] {
 // Most-accurate tier that still fits, for the cloud "Local AI" card. Falls back
 // through lighter tiers; null only if even the lightest local config won't fit.
 function bestViableLocalTier(hardware: Hardware): LocalTier | null {
-  const viable = LOCAL_TIERS.filter((tier) => fits(hardware, localTierSizes(tier)));
+  const viable = LOCAL_TIERS.filter((tier) => fitsHardware(hardware, localTierSizes(tier)));
   if (viable.length === 0) return null;
   // LOCAL_TIERS is ordered efficient → accurate; last viable is the most accurate.
   return viable[viable.length - 1];

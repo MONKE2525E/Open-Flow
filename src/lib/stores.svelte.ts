@@ -37,6 +37,9 @@ export interface Context {
   cleanup_intensity: string | null;
   color: string | null;
   custom_instructions: string | null;
+  contextual_formatting_disabled: boolean;
+  /** ISO timestamp of when the user pinned this context, or null if unpinned. */
+  pinned_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -45,6 +48,9 @@ export interface ContextTarget {
   id: number;
   context_id: number;
   executable: string;
+  app_name: string | null;
+  developer: string | null;
+  platform: string | null;
   created_at: string;
 }
 
@@ -87,6 +93,7 @@ export const appStore = $state({
   appVersion: '',
   devModeEnabled: false,
   appearanceMode: 'system' as AppearanceMode,
+  accentColor: null as string | null,
   // Mirrors the `cleanup_enabled` setting. Shared here (rather than owned
   // privately by GeneralSection) so Style.svelte and the App Mappings
   // settings page can react live to the toggle without their own
@@ -98,6 +105,7 @@ export const appStore = $state({
   // Dictionary/Snippets pages in the sidebar nav — both superseded by Contexts,
   // kept reachable for anyone still relying on the old per-page workflow.
   legacyFeaturesEnabled: false,
+  syncEnabled: false,
   pillState: 'idle' as PillState,
   setupComplete: null as boolean | null,
   snippets: [] as Snippet[],
@@ -149,12 +157,16 @@ export async function fetchSnippets(): Promise<void> {
   }
 }
 
-export const cleanupPromptOverridesStore = $state<{ overrides: Record<string, string> }>({
-  overrides: {},
-});
+/**
+ * The one cleanup prompt, used by every model. It was once keyed per
+ * provider/model, which quietly lost the edit the moment a fallback took over
+ * — you tuned the prompt on your default and the fallback ran the stock one.
+ */
+export const cleanupPromptStore = $state<{ override: string }>({ override: '' });
 
 export const cleanupPromptEditor = $state<{
   open: boolean;
+  /** The model the editor tests the prompt against — not what it saves under. */
   provider: ProviderId | null;
   model: string | null;
   origin: { x: number; y: number } | null;

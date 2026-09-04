@@ -192,13 +192,11 @@
 
   .preset-card:hover:not(.preset-active) {
     border-color: var(--line-strong);
-    box-shadow: var(--shadow-card, 0 2px 8px rgba(0, 0, 0, 0.06));
   }
 
   .preset-card.preset-active {
-    border-color: var(--jap-400);
-    background: color-mix(in srgb, var(--jap-100) 40%, var(--bg-elev));
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--jap-400) 35%, transparent);
+    border-color: var(--line-strong);
+    background: var(--control-active);
   }
 
   /* Select target: covers the whole card, sits behind the content. */
@@ -246,9 +244,9 @@
   }
 
   .preset-name {
-    font-family: var(--serif);
-    font-size: 16px;
-    font-weight: 500;
+    font-family: var(--sans);
+    font-size: 15px;
+    font-weight: 600;
     color: var(--ink);
     line-height: 1;
   }
@@ -363,26 +361,21 @@
     line-height: 1.35em;
     white-space: nowrap;
     backface-visibility: hidden;
-    transition:
-      transform 360ms cubic-bezier(0.16, 1, 0.3, 1),
-      opacity 220ms ease;
+    transition: opacity 160ms var(--ui-ease-out);
   }
 
   .pa-hover {
     position: absolute;
     inset: 0;
-    transform: translateY(100%);
     opacity: 0;
   }
 
   .hover-mode:hover .pa-default,
   .hover-mode:focus-visible .pa-default {
-    transform: translateY(-112%) rotateX(-8deg) scale(0.96);
     opacity: 0;
   }
   .hover-mode:hover .pa-hover,
   .hover-mode:focus-visible .pa-hover {
-    transform: translateY(0) rotateX(0) scale(1);
     opacity: 1;
   }
 

@@ -105,7 +105,12 @@ pub async fn run_pipeline_fixture(
         )?;
     }
     for entry in &request.dictionary {
-        db::insert_dictionary_entry_returning(&db_handle, &entry.term, entry.mistake.as_deref(), None)?;
+        db::insert_dictionary_entry_returning(
+            &db_handle,
+            &entry.term,
+            entry.mistake.as_deref(),
+            None,
+        )?;
     }
 
     let mut transcribed: Option<(String, String)> = None;
@@ -174,14 +179,18 @@ pub async fn run_pipeline_fixture(
         request.audio.duration_ms as i64,
         &api_used,
         None,
+        // Mirror finalize.rs: dictations are attributed to the resolved
+        // context so fixture results exercise context attribution too.
+        Some(context_id),
     )?;
     let injected = injection::inject_text(
         &injected_text,
         request.target_hwnd,
-        request.config.contextual_caps_enabled,
-        request.config.auto_spacing_enabled,
+        request.config.contextual_formatting_enabled,
+        request.config.contextual_formatting_enabled,
         &request.profile,
-        request.config.macos_clipboard_sniff_enabled,
+        &request.config.transcription_language,
+        false,
     )
     .await?;
     let recent = db::query_recent(&db_handle)?;

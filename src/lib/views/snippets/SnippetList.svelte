@@ -145,9 +145,9 @@
   }
 
   .empty-h {
-    font-family: var(--serif);
-    font-style: italic;
-    font-size: 17px;
+    font-family: var(--sans);
+    font-style: normal;
+    font-size: 15px;
     font-weight: 500;
     color: var(--ink-soft);
     margin: 0;

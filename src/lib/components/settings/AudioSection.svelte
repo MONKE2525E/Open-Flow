@@ -138,7 +138,7 @@
 </h2>
 
 <h3 class="settings-subhead first">Gain & calibration</h3>
-<div class="setting-row gain-row">
+<div class="setting-row gain-row" data-setting-target="audio-gain">
   <div class="gain-header">
     <div>
       <div class="label">Microphone gain</div>
@@ -170,7 +170,7 @@
   {/if}
 </div>
 
-<div class="setting-row cal-row" class:calibrating={$isCalibrating}>
+<div class="setting-row cal-row" class:calibrating={$isCalibrating} data-setting-target="audio-calibration">
   <div class="cal-copy">
     <div class="label">Auto calibration</div>
     <div class="desc">Speak naturally to automatically set the ideal microphone gain</div>
@@ -234,29 +234,29 @@
 </div>
 
 <h3 class="settings-subhead">Input</h3>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="audio-system-mute">
   <div><div class="label">{isMac ? 'Mute System Audio' : 'Mute PC Audio'}</div><div class="desc">{isMac ? 'Mutes system volume while dictating to prevent audio interference' : 'Mutes Windows volume while dictating to prevent audio interference'}</div></div>
   <Toggle checked={muteAudio} onchange={handleMuteAudio} label={isMac ? 'Mute system audio' : 'Mute PC audio'} />
 </div>
 {#if isMac}
-  <div class="setting-row">
+  <div class="setting-row" data-setting-target="audio-exclusive">
     <div><div class="label">Exclusive microphone access</div><div class="desc">Reserves the mic for Verenu while dictating, muting it for all other apps</div></div>
     <Toggle checked={exclusiveMic} onchange={handleExclusiveMic} label="Exclusive microphone access" />
   </div>
 {/if}
 {#if isWindows}
-  <div class="setting-row">
+  <div class="setting-row" data-setting-target="audio-pause-media">
     <div><div class="label">Pause media while dictating</div><div class="desc">Pauses active Windows media sessions and resumes them after transcription finishes. Works with apps that expose Windows media controls.</div></div>
     <Toggle checked={pauseMediaDuringDictation} onchange={handlePauseMedia} label="Pause media while dictating" />
   </div>
 {/if}
-<div class="setting-row">
+<div class="setting-row" data-setting-target="audio-noise">
   <div><div class="label">Noise reduction</div><div class="desc">Suppress background noise before transcription (RNNoise)</div></div>
   <Toggle checked={noiseReduction} onchange={handleNoiseReduction} label="Noise reduction" />
 </div>
 
 <h3 class="settings-subhead">Sound effects</h3>
-<div class="setting-row sound-volume-row">
+<div class="setting-row sound-volume-row" data-setting-target="audio-sounds">
   <div class="sound-volume-header">
     <div>
       <div class="label">Sound effects volume</div>

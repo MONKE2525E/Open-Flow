@@ -27,6 +27,7 @@ mod permissions;
 mod recording;
 mod service_status;
 mod settings;
+mod sync;
 mod system;
 mod updater;
 
@@ -53,6 +54,7 @@ pub use permissions::*;
 pub use recording::*;
 pub use service_status::*;
 pub use settings::*;
+pub use sync::*;
 pub use system::*;
 pub use updater::*;
 
@@ -175,6 +177,7 @@ mod tests {
             crate::data::store::CLEANUP_ENABLED,
             crate::data::store::NOISE_REDUCTION,
             crate::data::store::AUTO_SPACING,
+            crate::data::store::CONTEXTUAL_FORMATTING,
             crate::data::store::DUAL_TRANSCRIPTION_ENABLED,
         ] {
             assert!(
@@ -237,10 +240,8 @@ mod tests {
     fn validate_setting_rejects_oversized_cleanup_prompt_override() {
         let too_long = "x".repeat(20_001);
         let err = validate_setting(
-            crate::data::store::CLEANUP_PROMPT_OVERRIDES,
-            &json!({
-                "groq/llama-3.3-70b-versatile": too_long
-            }),
+            crate::data::store::CLEANUP_PROMPT_OVERRIDE,
+            &json!(too_long),
         )
         .expect_err("oversized cleanup prompt override should fail");
         assert!(err.contains("Invalid or unsupported setting"));

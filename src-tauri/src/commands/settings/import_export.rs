@@ -149,7 +149,7 @@ pub async fn import_data(
         let settings = store::settings_handle(&app)?;
         let mut settings_applied = 0usize;
         let mut settings_skipped = 0usize;
-        let mut appearance_mode_applied = false;
+        let mut runtime_icon_setting_applied = false;
         let mut history_prune_days: Option<i64> = None;
 
         if !payload.settings.is_object() {
@@ -164,8 +164,8 @@ pub async fn import_data(
                 match validate_setting(key, value) {
                     Ok(()) => {
                         settings.set(key.clone(), value.clone())?;
-                        if key == store::APPEARANCE_MODE {
-                            appearance_mode_applied = true;
+                        if crate::app_tray::setting_updates_runtime_icons(key) {
+                            runtime_icon_setting_applied = true;
                         }
                         // Mirror save_setting's side effect: a backup that
                         // tightens history retention must prune immediately,
@@ -185,7 +185,7 @@ pub async fn import_data(
             settings.save()?;
         }
 
-        if appearance_mode_applied {
+        if runtime_icon_setting_applied {
             crate::apply_runtime_icons(&app, None);
         }
 

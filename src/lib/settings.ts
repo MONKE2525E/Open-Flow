@@ -50,7 +50,10 @@ type SettingsValueMap = {
   force_setup_on_launch: boolean;
   app_context_hint: boolean;
   auto_learn_enabled: boolean;
+  contextual_formatting_enabled: boolean;
+  /** @deprecated Compatibility mirror for one downgrade cycle. */
   contextual_caps_enabled: boolean;
+  /** @deprecated Compatibility mirror for one downgrade cycle. */
   auto_spacing_enabled: boolean;
   caps_lock_uppercase_enabled: boolean;
   clipboard_phrase_enabled: boolean;
@@ -63,9 +66,14 @@ type SettingsValueMap = {
   beta_updates_enabled: boolean;
   verenu_service_checks_enabled: boolean;
   appearance_mode: AppearanceMode;
+  accent_color: string | null;
   advanced_model_ui: boolean;
-  cleanup_prompt_overrides: Record<string, string>;
+  /** One cleanup prompt for every model — see stores.svelte.ts. */
+  cleanup_prompt_override: string;
+  /** Derived cache of each provider's live model list. Written only by modelCatalogStore. */
+  provider_model_cache: Record<string, unknown>;
   legacy_features_enabled: boolean;
+  sync_enabled: boolean;
 };
 
 type SettingKey = keyof SettingsValueMap;

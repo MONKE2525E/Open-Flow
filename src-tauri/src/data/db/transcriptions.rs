@@ -23,6 +23,9 @@ pub struct Stats {
     pub day_streak: i64,
 }
 
+// One flat call site in the pipeline; bundling these into a params struct
+// would add a type without removing a caller.
+#[allow(clippy::too_many_arguments)]
 pub fn insert_transcription_returning(
     db: &Db,
     raw: &str,
@@ -31,15 +34,16 @@ pub fn insert_transcription_returning(
     duration_ms: i64,
     api_used: &str,
     app_name: Option<&str>,
+    context_id: Option<i64>,
 ) -> Result<RecentEntry> {
     let mut conn = lock_conn(db)?;
     let spoken_words = compute_spoken_words(&conn, raw)?;
     let tx = conn.transaction()?;
     let entry = tx.query_row(
-        "INSERT INTO transcriptions (raw_text, clean_text, words, spoken_words, duration_ms, api_used, app_name) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+        "INSERT INTO transcriptions (raw_text, clean_text, words, spoken_words, duration_ms, api_used, app_name, context_id) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
          RETURNING id, clean_text, words, duration_ms, app_name, created_at",
-        params![raw, clean, words, spoken_words, duration_ms, api_used, app_name],
+        params![raw, clean, words, spoken_words, duration_ms, api_used, app_name, context_id],
         |r| {
             Ok(RecentEntry {
                 id: r.get(0)?,
@@ -200,8 +204,11 @@ pub fn query_distinct_apps(db: &Db) -> Result<Vec<String>> {
 pub fn query_stats(db: &Db) -> Result<Stats> {
     let conn = lock_conn(db)?;
 
+    // Own lifetime counter plus any counters synced from paired devices —
+    // each dictation is counted once, by the device it happened on.
     let total_words: i64 = conn.query_row(
-        "SELECT total_words FROM lifetime_stats WHERE id = 1",
+        "SELECT COALESCE((SELECT total_words FROM lifetime_stats WHERE id = 1), 0)
+              + COALESCE((SELECT SUM(total_words) FROM sync_remote_stats), 0)",
         [],
         |r| r.get(0),
     )?;
@@ -283,6 +290,7 @@ mod tests {
                 1000,
                 "groq/whisper-large-v3-turbo",
                 None,
+                None,
             )
             .expect("insert transcription");
         }
@@ -301,12 +309,39 @@ mod tests {
     #[test]
     fn query_recent_page_filters_by_search_case_insensitive_and_partial() {
         let db = crate::data::db::open(":memory:").expect("db");
-        insert_transcription_returning(&db, "raw apple pie", "Clean Apple Pie", 3, 1000, "t", None)
-            .expect("insert apple");
-        insert_transcription_returning(&db, "raw banana", "Clean Banana Split", 2, 1000, "t", None)
-            .expect("insert banana");
-        insert_transcription_returning(&db, "raw raisin", "Clean Raisin Bread", 2, 1000, "t", None)
-            .expect("insert raisin");
+        insert_transcription_returning(
+            &db,
+            "raw apple pie",
+            "Clean Apple Pie",
+            3,
+            1000,
+            "t",
+            None,
+            None,
+        )
+        .expect("insert apple");
+        insert_transcription_returning(
+            &db,
+            "raw banana",
+            "Clean Banana Split",
+            2,
+            1000,
+            "t",
+            None,
+            None,
+        )
+        .expect("insert banana");
+        insert_transcription_returning(
+            &db,
+            "raw raisin",
+            "Clean Raisin Bread",
+            2,
+            1000,
+            "t",
+            None,
+            None,
+        )
+        .expect("insert raisin");
 
         // Partial + case-insensitive on clean_text.
         let hits = query_recent_page(&db, 50, 0, Some("apple"), None).expect("search apple");
@@ -335,12 +370,39 @@ mod tests {
     #[test]
     fn query_recent_page_filters_by_app_and_combines_with_search() {
         let db = crate::data::db::open(":memory:").expect("db");
-        insert_transcription_returning(&db, "raw a", "Clean A", 1, 1000, "t", Some("outlook.exe"))
-            .expect("insert outlook a");
-        insert_transcription_returning(&db, "raw b", "Clean B", 1, 1000, "t", Some("outlook.exe"))
-            .expect("insert outlook b");
-        insert_transcription_returning(&db, "raw c", "Clean C", 1, 1000, "t", Some("code.exe"))
-            .expect("insert code c");
+        insert_transcription_returning(
+            &db,
+            "raw a",
+            "Clean A",
+            1,
+            1000,
+            "t",
+            Some("outlook.exe"),
+            None,
+        )
+        .expect("insert outlook a");
+        insert_transcription_returning(
+            &db,
+            "raw b",
+            "Clean B",
+            1,
+            1000,
+            "t",
+            Some("outlook.exe"),
+            None,
+        )
+        .expect("insert outlook b");
+        insert_transcription_returning(
+            &db,
+            "raw c",
+            "Clean C",
+            1,
+            1000,
+            "t",
+            Some("code.exe"),
+            None,
+        )
+        .expect("insert code c");
 
         let outlook = query_recent_page(&db, 50, 0, None, Some("outlook.exe")).expect("outlook");
         assert_eq!(outlook.len(), 2);
@@ -365,8 +427,17 @@ mod tests {
     #[test]
     fn query_recent_page_treats_like_wildcards_in_search_literally() {
         let db = crate::data::db::open(":memory:").expect("db");
-        insert_transcription_returning(&db, "raw 100%", "Clean 100% Sure", 3, 1000, "t", None)
-            .expect("insert percent");
+        insert_transcription_returning(
+            &db,
+            "raw 100%",
+            "Clean 100% Sure",
+            3,
+            1000,
+            "t",
+            None,
+            None,
+        )
+        .expect("insert percent");
 
         // A literal "%" must match its own character, not act as a wildcard.
         let hits = query_recent_page(&db, 50, 0, Some("100%"), None).expect("literal percent");
@@ -380,10 +451,28 @@ mod tests {
     #[test]
     fn query_recent_page_matches_app_name_from_search_box() {
         let db = crate::data::db::open(":memory:").expect("db");
-        insert_transcription_returning(&db, "raw a", "Clean A", 1, 1000, "t", Some("chrome.exe"))
-            .expect("insert chrome");
-        insert_transcription_returning(&db, "raw b", "Clean B", 1, 1000, "t", Some("outlook.exe"))
-            .expect("insert outlook");
+        insert_transcription_returning(
+            &db,
+            "raw a",
+            "Clean A",
+            1,
+            1000,
+            "t",
+            Some("chrome.exe"),
+            None,
+        )
+        .expect("insert chrome");
+        insert_transcription_returning(
+            &db,
+            "raw b",
+            "Clean B",
+            1,
+            1000,
+            "t",
+            Some("outlook.exe"),
+            None,
+        )
+        .expect("insert outlook");
 
         // Typing an app name finds that app's dictations without the dropdown.
         let hits = query_recent_page(&db, 50, 0, Some("chrome"), None).expect("search chrome");
@@ -407,6 +496,7 @@ mod tests {
             1000,
             "t",
             Some("outlook.exe"),
+            None,
         )
         .expect("insert quarterly");
         insert_transcription_returning(
@@ -416,6 +506,7 @@ mod tests {
             5,
             1000,
             "t",
+            None,
             None,
         )
         .expect("insert follow-up");
@@ -427,6 +518,7 @@ mod tests {
             1000,
             "t",
             Some("code.exe"),
+            None,
         )
         .expect("insert report");
 
@@ -456,13 +548,40 @@ mod tests {
     #[test]
     fn query_distinct_apps_returns_non_empty_unique_names() {
         let db = crate::data::db::open(":memory:").expect("db");
-        insert_transcription_returning(&db, "raw a", "Clean A", 1, 1000, "t", Some("outlook.exe"))
-            .expect("insert outlook");
-        insert_transcription_returning(&db, "raw b", "Clean B", 1, 1000, "t", Some("outlook.exe"))
-            .expect("insert outlook again");
-        insert_transcription_returning(&db, "raw c", "Clean C", 1, 1000, "t", Some("code.exe"))
-            .expect("insert code");
-        insert_transcription_returning(&db, "raw d", "Clean D", 1, 1000, "t", None)
+        insert_transcription_returning(
+            &db,
+            "raw a",
+            "Clean A",
+            1,
+            1000,
+            "t",
+            Some("outlook.exe"),
+            None,
+        )
+        .expect("insert outlook");
+        insert_transcription_returning(
+            &db,
+            "raw b",
+            "Clean B",
+            1,
+            1000,
+            "t",
+            Some("outlook.exe"),
+            None,
+        )
+        .expect("insert outlook again");
+        insert_transcription_returning(
+            &db,
+            "raw c",
+            "Clean C",
+            1,
+            1000,
+            "t",
+            Some("code.exe"),
+            None,
+        )
+        .expect("insert code");
+        insert_transcription_returning(&db, "raw d", "Clean D", 1, 1000, "t", None, None)
             .expect("insert no app");
 
         let apps = query_distinct_apps(&db).expect("distinct apps");

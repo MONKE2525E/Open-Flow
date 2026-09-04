@@ -1,14 +1,15 @@
 use super::gates::strip_provider_artifacts;
-use super::stages::{cleanup_cache_plan, dual_cleanup_context_fingerprint, speech_gate_accepts};
+use super::stages_cleanup::{cleanup_cache_plan, dual_cleanup_context_fingerprint};
+use super::stages_transcription::speech_gate_accepts;
 use super::{
-    apply_app_style_overrides, effective_recording_rms, ensure_terminal_punctuation,
-    has_spoken_content, is_transcription_hallucination, normalize_transcription_math_artifacts,
-    append_cleanup_api_used, preview_text, recording_gate_rms, resolve_app_mapping,
-    run_pipeline_fixture,
-    should_run_cleanup_llm, should_use_cleanup_cache, strip_hallucinated_suffix,
-    style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry, PipelineTestRequest,
-    PipelineTestSnippet,
+    append_cleanup_api_used, apply_app_style_overrides, effective_recording_rms,
+    ensure_terminal_punctuation, has_spoken_content, is_transcription_hallucination,
+    normalize_transcription_math_artifacts, preview_text, recording_gate_rms, resolve_app_mapping,
+    run_pipeline_fixture, should_run_cleanup_llm, should_use_cleanup_cache,
+    strip_hallucinated_suffix, style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry,
+    PipelineTestRequest, PipelineTestSnippet,
 };
+use crate::db;
 use crate::system::apps::AppMapping;
 
 #[test]
@@ -271,12 +272,26 @@ fn transcription_does_not_fold_mixed_multiplication_chunks() {
 
 #[test]
 fn cleanup_llm_skips_when_cleanup_is_off_even_for_formal() {
-    assert!(!should_run_cleanup_llm(true, true, true, "none", "formal"));
+    assert!(!should_run_cleanup_llm(
+        true, true, true, "none", "formal", false
+    ));
 }
 
 #[test]
 fn cleanup_llm_skips_for_non_formal_when_none_intensity() {
-    assert!(!should_run_cleanup_llm(true, true, true, "none", "casual"));
+    assert!(!should_run_cleanup_llm(
+        true, true, true, "none", "casual", false
+    ));
+}
+
+#[test]
+fn cleanup_llm_runs_off_only_for_required_dual_fusion() {
+    assert!(should_run_cleanup_llm(
+        true, true, true, "none", "casual", true
+    ));
+    assert!(!should_run_cleanup_llm(
+        false, true, true, "none", "casual", true
+    ));
 }
 
 #[test]
@@ -460,6 +475,31 @@ fn app_mapping_empty_override_fields_fall_back_to_globals() {
 }
 
 #[test]
+fn context_can_disable_contextual_formatting_without_changing_global_setting() {
+    let mut cfg = base_config();
+    let context = db::Context {
+        id: 2,
+        name: "Terminal".into(),
+        is_everywhere: false,
+        icon: None,
+        tone: None,
+        cleanup_intensity: None,
+        color: None,
+        custom_instructions: None,
+        contextual_formatting_disabled: true,
+        pinned_at: None,
+        created_at: String::new(),
+        updated_at: String::new(),
+    };
+
+    apply_app_style_overrides(&mut cfg, None, Some(&context));
+    assert!(!cfg.contextual_formatting_enabled);
+
+    let global_cfg = base_config();
+    assert!(global_cfg.contextual_formatting_enabled);
+}
+
+#[test]
 fn resolve_app_mapping_is_scoped_to_matching_exe() {
     let mappings = serde_json::json!([
         { "exe": "appa.exe", "profile": "very_casual", "cleanup_intensity": "high" }
@@ -495,13 +535,11 @@ fn base_config() -> store::PipelineConfig {
         clipboard_phrase: "paste clipboard here".into(),
         app_context_hint: false,
         auto_learn_enabled: false,
-        contextual_caps_enabled: true,
-        auto_spacing_enabled: true,
+        contextual_formatting_enabled: true,
         caps_lock_uppercase_enabled: false,
-        macos_clipboard_sniff_enabled: false,
         advanced_model_ui: false,
         local_model_memory_policy: "unload_after_5m".into(),
-        cleanup_prompt_overrides: std::collections::HashMap::new(),
+        cleanup_prompt_override: String::new(),
     }
 }
 
@@ -1158,8 +1196,7 @@ async fn pipeline_fixture_accepts_downloaded_local_model_without_api_keys() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn pipeline_fixture_strips_filler_words_mechanically_when_cleanup_disabled_but_intensity_is_not_none(
-) {
+async fn pipeline_fixture_preserves_filler_words_when_cleanup_disabled() {
     let _guard = harness_test_lock().lock().expect("harness lock");
     let _local_models = install_local_models(&["parakeet-v3"]);
     reset();
@@ -1192,7 +1229,7 @@ async fn pipeline_fixture_strips_filler_words_mechanically_when_cleanup_disabled
     );
     assert_eq!(
         result.final_text_before_dictionary,
-        "Just have basically sync users, to the database."
+        "Just have um basically sync users, uh, to the database."
     );
     reset();
 }
