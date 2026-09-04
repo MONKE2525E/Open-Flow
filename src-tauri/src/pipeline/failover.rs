@@ -641,8 +641,10 @@ impl DurableSink for LiveWriter {
         if self.native_rate == 0 {
             self.native_rate = native_rate;
         } else if self.native_rate != native_rate {
-            // Flush the previous rate's tail before switching ratios.
-            self.checkpoint(false);
+            // Finish-flush so convert_native drains the old-rate interpolator
+            // tail instead of leaving a sample that would be resampled with the
+            // new ratio.
+            self.checkpoint(true);
             self.native_rate = native_rate;
         }
         self.native_tail.extend_from_slice(native_samples);
