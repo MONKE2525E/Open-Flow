@@ -640,6 +640,10 @@ impl DurableSink for LiveWriter {
         }
         if self.native_rate == 0 {
             self.native_rate = native_rate;
+        } else if self.native_rate != native_rate {
+            // Flush the previous rate's tail before switching ratios.
+            self.checkpoint(false);
+            self.native_rate = native_rate;
         }
         self.native_tail.extend_from_slice(native_samples);
         let one_sec = self.native_rate.max(1) as usize;

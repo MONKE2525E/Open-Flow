@@ -130,7 +130,9 @@ pub fn start_recording_session_ex(
         None
     };
 
-    let (durable_sink, prepend_for_lifecycle) = {
+    // Keep the state lock off the disk path: collect durable session ids under
+    // the lock, then open the live spool after dropping it.
+    let (durable_id, prepend_for_lifecycle) = {
         let mut st = match lock_state(state) {
             Ok(st) => st,
             Err(e) => {
@@ -157,7 +159,7 @@ pub fn start_recording_session_ex(
                 );
             }
         };
-        let sink = if options.durable {
+        let durable_id = if options.durable {
             let id = if st.failover_reuse_id {
                 st.failover_reuse_id = false;
                 st.failover_session_id
@@ -173,20 +175,25 @@ pub fn start_recording_session_ex(
                     .map(|d| d.as_secs() as i64)
                     .unwrap_or(0);
             }
-            super::failover::open_live_writer(
-                id,
-                prepend_audio.as_ref().map(|a| a.samples_16k.as_slice()),
-                app,
-                state,
-            )
+            Some(id)
         } else {
             st.failover_session_id = None;
             st.failover_reuse_id = false;
             st.failover_started_at_unix = 0;
             None
         };
-        (sink, prepend_audio)
+        (durable_id, prepend_audio)
     };
+    let durable_sink = durable_id.and_then(|id| {
+        super::failover::open_live_writer(
+            id,
+            prepend_for_lifecycle
+                .as_ref()
+                .map(|a| a.samples_16k.as_slice()),
+            app,
+            state,
+        )
+    });
 
     match audio::RecordingSession::start(device, noise_reduction, mic_gain, durable_sink) {
         Ok(session) => {
@@ -462,7 +469,9 @@ pub fn stash_cancelled_capture(
     };
     match outcome {
         StashOutcome::Stashed(capture) => {
-            if start_stop_sounds_enabled(app) {
+            if start_stop_sounds_enabled(app)
+                && matches!(capture.origin, CaptureOrigin::UserCancelled)
+            {
                 crate::media::sound::play(crate::media::sound::SoundCue::Cancel);
             }
             emit_cancelled_capture(app, &capture);
