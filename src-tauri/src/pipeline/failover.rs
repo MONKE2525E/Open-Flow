@@ -337,7 +337,7 @@ pub fn restore_choice(root: &Path, now_unix: i64) -> Option<LoadedTake> {
             }
         }
         (Some(l), Some(c)) => {
-            if l.duration_ms() >= MIN_RECORDING_MS {
+            if l.meta.started_at_unix >= c.meta.started_at_unix {
                 delete_committed(root);
                 Some(l)
             } else {
@@ -864,14 +864,48 @@ mod tests {
     fn long_new_live_wins_over_committed() {
         let root = test_root();
         let old = loud_ms(1200);
-        write_committed(&root, "old-id", FailoverKind::Cancelled, now_unix(), &old).unwrap();
+        let now = now_unix();
+        write_committed(&root, "old-id", FailoverKind::Cancelled, now - 1, &old).unwrap();
         let neu = loud_ms(900);
-        let mut w = LiveWriter::open(root.clone(), "new-id".into(), Some(&neu), None, None).unwrap();
-        w.finish();
-        drop(w);
-        let restored = restore_choice(&root, now_unix()).unwrap();
+        write_slot(
+            &root,
+            true,
+            "new-id",
+            FailoverKind::Recording,
+            now,
+            &neu,
+        )
+        .unwrap();
+        let restored = restore_choice(&root, now).unwrap();
         assert_eq!(restored.meta.id, "new-id");
         assert!(load_slot(&root, false).is_none());
+        delete_all(&root);
+    }
+
+    #[test]
+    fn newer_committed_beats_older_live() {
+        let root = test_root();
+        let now = now_unix();
+        write_slot(
+            &root,
+            true,
+            "old-live",
+            FailoverKind::Recording,
+            now - 2,
+            &loud_ms(1200),
+        )
+        .unwrap();
+        write_committed(
+            &root,
+            "new-committed",
+            FailoverKind::Cancelled,
+            now - 1,
+            &loud_ms(900),
+        )
+        .unwrap();
+        let restored = restore_choice(&root, now).unwrap();
+        assert_eq!(restored.meta.id, "new-committed");
+        assert!(load_slot(&root, true).is_none());
         delete_all(&root);
     }
 
