@@ -70,7 +70,6 @@ fn main() {
         failover_reuse_id: false,
         failover_started_at_unix: 0,
     }));
-    pipeline::failover::restore_into_state(&shared);
 
     std::fs::create_dir_all(app_data_dir()).ok();
     // The logger must be live before the database opens: a corrupt DB,
@@ -79,6 +78,7 @@ fn main() {
     // exists. init_early captures those records in the ring buffer;
     // attach_app in setup enables frontend forwarding.
     crate::system::logger::init_early();
+    pipeline::failover::restore_into_state(&shared);
     let db_handle: DbHandle = match db::open_with_recovery(app_db_path()) {
         Ok(db) => db,
         Err(err) => fatal_startup_error(&format!("failed to open database: {err}")),

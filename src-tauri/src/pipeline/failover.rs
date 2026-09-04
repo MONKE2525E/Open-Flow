@@ -119,7 +119,8 @@ fn replace_file(from: &Path, to: &Path) -> std::io::Result<()> {
     let _ = fs::remove_file(to);
     match fs::rename(from, to) {
         Ok(()) => Ok(()),
-        Err(e) if e.raw_os_error() == Some(5) => {
+        // Windows: access denied (5), sharing violation (32), already exists (183).
+        Err(e) if matches!(e.raw_os_error(), Some(5 | 32 | 183)) => {
             fs::copy(from, to)?;
             let _ = fs::remove_file(from);
             Ok(())
@@ -178,8 +179,8 @@ pub fn load_slot(root: &Path, live: bool) -> Option<LoadedTake> {
     let mut buf = vec![0u8; byte_len];
     file.read_exact(&mut buf).ok()?;
     let mut samples = Vec::with_capacity(usable as usize);
-    for chunk in buf.chunks_exact(2) {
-        samples.push(i16_to_f32(i16::from_le_bytes([chunk[0], chunk[1]])));
+    for chunk in buf.as_chunks::<2>().0 {
+        samples.push(i16_to_f32(i16::from_le_bytes(*chunk)));
     }
     meta.sample_count = usable;
     meta.duration_ms = usable * 1000 / u64::from(TARGET_RATE);

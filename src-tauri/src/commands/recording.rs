@@ -551,6 +551,12 @@ pub async fn resume_cancelled_capture(
         }
         Err(err) => {
             pipeline::cancel_starting_reservation(state.inner());
+            if let Ok(mut st) = lock_state(&state) {
+                st.failover_session_id = None;
+                st.failover_reuse_id = false;
+                st.failover_started_at_unix = 0;
+            }
+            pipeline::failover::abandon_live();
             Err(err)
         }
     }

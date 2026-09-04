@@ -338,6 +338,9 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     let Some((mut captured_audio, mut rms, mut raw_rms)) =
         stop_and_capture_audio(&app, session, exclusive_mic_session_id).await
     else {
+        // stop_and_capture_audio already abandons live on its own failure
+        // paths; call again so a future None return cannot leave a spool.
+        failover::abandon_live();
         state::leave_stopping_if_owned(&state, generation);
         return;
     };

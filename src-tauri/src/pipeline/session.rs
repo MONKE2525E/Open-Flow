@@ -202,6 +202,9 @@ pub fn start_recording_session_ex(
                         if let Some(session_id) = exclusive_mic_session_id {
                             crate::system::volume::release_mic(session_id);
                         }
+                        if options.durable {
+                            super::failover::abandon_live();
+                        }
                         release_starting_reservation(state);
                         return Err(e.to_string());
                     }
@@ -214,6 +217,9 @@ pub fn start_recording_session_ex(
                     let _ = session.stop();
                     if let Some(session_id) = exclusive_mic_session_id {
                         crate::system::volume::release_mic(session_id);
+                    }
+                    if options.durable {
+                        super::failover::abandon_live();
                     }
                     return Err(
                         "Recording start reservation was lost before the microphone opened"
@@ -395,7 +401,7 @@ pub fn stash_cancelled_capture(
         SessionActive,
     }
     let outcome = match lock_state(state) {
-        Ok(mut st) => {
+        Ok(st) => {
             // Only stash while the system is genuinely idle. Between
             // `stop_and_capture_audio` (which released the Recording
             // lifecycle) and this call the user may have already started a
@@ -420,6 +426,9 @@ pub fn stash_cancelled_capture(
                     CaptureOrigin::UserCancelled => super::failover::FailoverKind::Cancelled,
                     CaptureOrigin::Interrupted => super::failover::FailoverKind::Recording,
                 };
+                // Drop the state lock before disk I/O so hotkey/UI paths are
+                // not stalled on fsync.
+                drop(st);
                 super::failover::commit_capture(&audio, &id, kind, started_at_unix);
                 let capture = CancelledCapture {
                     audio,
@@ -429,11 +438,20 @@ pub fn stash_cancelled_capture(
                     created_at_rfc3339: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
                     started_at_unix,
                 };
-                st.cancelled_capture = Some(capture.clone());
-                st.failover_session_id = None;
-                st.failover_reuse_id = false;
-                st.failover_started_at_unix = 0;
-                StashOutcome::Stashed(capture)
+                match lock_state(state) {
+                    Ok(mut st) => {
+                        if !st.lifecycle.is_idle() {
+                            StashOutcome::SessionActive
+                        } else {
+                            st.cancelled_capture = Some(capture.clone());
+                            st.failover_session_id = None;
+                            st.failover_reuse_id = false;
+                            st.failover_started_at_unix = 0;
+                            StashOutcome::Stashed(capture)
+                        }
+                    }
+                    Err(_) => StashOutcome::LockPoisoned,
+                }
             }
         }
         Err(_) => StashOutcome::LockPoisoned,
