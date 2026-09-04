@@ -419,7 +419,7 @@ pub fn stash_cancelled_capture(
         SessionActive,
     }
     let outcome = match lock_state(state) {
-        Ok(st) => {
+        Ok(mut st) => {
             // Only stash while the system is genuinely idle. Between
             // `stop_and_capture_audio` (which released the Recording
             // lifecycle) and this call the user may have already started a
@@ -444,6 +444,12 @@ pub fn stash_cancelled_capture(
                     CaptureOrigin::UserCancelled => super::failover::FailoverKind::Cancelled,
                     CaptureOrigin::Interrupted => super::failover::FailoverKind::Recording,
                 };
+                // Reserve this capture's identity before releasing the lock.
+                // A new recording may start while commit_capture performs
+                // blocking disk I/O and must receive fresh failover metadata.
+                st.failover_session_id = None;
+                st.failover_reuse_id = false;
+                st.failover_started_at_unix = 0;
                 // Drop the state lock before disk I/O so hotkey/UI paths are
                 // not stalled on fsync.
                 drop(st);
