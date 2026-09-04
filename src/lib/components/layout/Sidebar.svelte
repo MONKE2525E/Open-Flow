@@ -835,6 +835,11 @@
     overflow: hidden;
   }
 
+  /* Overlayed macOS traffic lights occupy the top-left of the webview. Move
+     the sidebar content below that native hit area while keeping the brand's
+     horizontal alignment unchanged. */
+  :global(.app-mac) .sidebar { padding-top: 16px; }
+
   /*
    * The settings wash (.settings-overlay, z-index 60) covers the whole app so
    * click-outside still works in the left gutter; the rail has to sit above it
