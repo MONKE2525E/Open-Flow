@@ -22,7 +22,7 @@
   let failedEntry: { created_at: string } | null = null;
   let retrying = false;
   let failedTimer: ReturnType<typeof setTimeout> | null = null;
-  let cancelledEntry: { created_at: string } | null = null;
+  let cancelledEntry: { created_at: string; kind: 'cancelled' | 'interrupted' } | null = null;
   let resumingCancelled = false;
   let cancelledTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -208,6 +208,20 @@
       .then(hk => { if (hk?.length === 2) hotkey = hk; })
       .catch(() => { /* use platform default if setting unavailable */ });
     load();
+    invoke<{ created_at: string; kind: string } | null>('get_cancelled_capture')
+      .then((pending) => {
+        if (!pending) return;
+        cancelledEntry = {
+          created_at: pending.created_at,
+          kind: pending.kind === 'interrupted' ? 'interrupted' : 'cancelled',
+        };
+        if (cancelledTimer) clearTimeout(cancelledTimer);
+        cancelledTimer = setTimeout(() => {
+          cancelledEntry = null;
+          cancelledTimer = null;
+        }, 10 * 60 * 1000);
+      })
+      .catch(() => {});
 
     let mounted = true;
     const unlisteners: (() => void)[] = [];
@@ -248,8 +262,11 @@
       }, 10 * 60 * 1000);
     }));
 
-    trackListener(listen<string>('verenu:cancelled-capture', (ev) => {
-      cancelledEntry = { created_at: ev.payload };
+    trackListener(listen<{ created_at: string; kind?: string }>('verenu:cancelled-capture', (ev) => {
+      cancelledEntry = {
+        created_at: ev.payload.created_at,
+        kind: ev.payload.kind === 'interrupted' ? 'interrupted' : 'cancelled',
+      };
       if (cancelledTimer) clearTimeout(cancelledTimer);
       cancelledTimer = setTimeout(() => {
         cancelledEntry = null;

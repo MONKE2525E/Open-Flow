@@ -184,7 +184,15 @@ pub(super) async fn finalize_pipeline_completion(
     })
     .await
     {
-        Ok(Ok(entry)) => entry,
+        Ok(Ok(entry)) => {
+            super::failover::discard_durable();
+            if let Ok(mut st) = lock_state(state) {
+                st.failover_session_id = None;
+                st.failover_reuse_id = false;
+                st.failover_started_at_unix = 0;
+            }
+            entry
+        }
         Ok(Err(e)) => {
             show_error_pill(
                 app,

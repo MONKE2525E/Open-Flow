@@ -68,6 +68,7 @@ pub async fn start_input_recording(
                 show_recording_pill: true,
                 emit_globally: false,
                 start_cue_delay_ms: None,
+                durable: false,
             },
         )
     })
@@ -136,6 +137,7 @@ pub async fn start_setup_try_recording(
                 } else {
                     None
                 },
+                durable: false,
             },
         )
     })
@@ -214,6 +216,7 @@ pub async fn start_calibration_monitoring(
                 show_recording_pill: false,
                 emit_globally: true,
                 start_cue_delay_ms: None,
+                durable: false,
             },
         )
     })
@@ -344,6 +347,7 @@ pub async fn start_repair_complaint_recording(
             show_recording_pill: true,
             emit_globally: false,
             start_cue_delay_ms: None,
+            durable: false,
         },
     )
 }
@@ -500,11 +504,11 @@ pub async fn resume_cancelled_capture(
     // underway — a mid-start failure (mic permissions, poisoned lock) must
     // leave it resumable rather than destroying the audio.
     pipeline::reserve_starting(state.inner())?;
-    let Some(audio) = pipeline::peek_cancelled_capture_if_fresh(state.inner()) else {
+    let Some(capture) = pipeline::peek_cancelled_capture_if_fresh(state.inner()) else {
         pipeline::cancel_starting_reservation(state.inner());
         return Err("Nothing to resume".to_string());
     };
-    pipeline::set_starting_prepend_audio(state.inner(), audio);
+    pipeline::set_starting_prepend_audio(state.inner(), capture.audio.clone());
     let target = WindowTarget::capture_foreground();
     {
         let mut st = match lock_state(&state) {
@@ -516,12 +520,60 @@ pub async fn resume_cancelled_capture(
         };
         st.target = target;
         st.pill_placement_stale = true;
+        st.failover_session_id = Some(capture.id.clone());
+        st.failover_reuse_id = true;
+        st.failover_started_at_unix = capture.started_at_unix;
     }
-    pipeline::start_recording_session(&app, state.inner(), "handsfree", true);
-    crate::core::hotkey::set_handless_active(true);
-    pipeline::clear_cancelled_capture(state.inner());
-    pipeline::emit_cancelled_capture_cleared(&app);
-    Ok(())
+    let start_result = pipeline::start_recording_session_ex(
+        &app,
+        state.inner(),
+        "handsfree",
+        true,
+        None,
+        pipeline::RecordingStartOptions {
+            show_recording_pill: true,
+            emit_globally: false,
+            start_cue_delay_ms: if pipeline::start_stop_sounds_enabled(&app) {
+                Some(crate::media::sound::START_CUE_HANDSFREE_DELAY_MS)
+            } else {
+                None
+            },
+            durable: true,
+        },
+    );
+    match start_result {
+        Ok(()) => {
+            crate::core::hotkey::set_handless_active(true);
+            pipeline::failover::retire_committed();
+            pipeline::clear_cancelled_capture(state.inner());
+            pipeline::emit_cancelled_capture_cleared(&app);
+            Ok(())
+        }
+        Err(err) => {
+            pipeline::cancel_starting_reservation(state.inner());
+            Err(err)
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+pub struct CancelledCaptureStatus {
+    pub created_at: String,
+    pub kind: String,
+}
+
+#[tauri::command]
+pub fn get_cancelled_capture(
+    state: tauri::State<'_, SharedState>,
+) -> Result<Option<CancelledCaptureStatus>, String> {
+    Ok(
+        pipeline::peek_cancelled_capture_if_fresh(state.inner()).map(|capture| {
+            CancelledCaptureStatus {
+                created_at: capture.created_at_rfc3339,
+                kind: capture.origin.as_str().to_string(),
+            }
+        }),
+    )
 }
 
 /// Discards a cancelled recording's stashed audio without resuming it —
@@ -536,6 +588,7 @@ pub async fn dismiss_cancelled_capture(
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
     if pipeline::take_cancelled_capture_if_fresh(state.inner()).is_some() {
+        pipeline::failover::discard_durable();
         pipeline::emit_cancelled_capture_cleared(&app);
     }
     Ok(())

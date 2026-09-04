@@ -66,7 +66,11 @@ fn main() {
         paste_failure: None,
         repair: None,
         hotkey_recording_repair_complaint: false,
+        failover_session_id: None,
+        failover_reuse_id: false,
+        failover_started_at_unix: 0,
     }));
+    pipeline::failover::restore_into_state(&shared);
 
     std::fs::create_dir_all(app_data_dir()).ok();
     // The logger must be live before the database opens: a corrupt DB,
@@ -499,6 +503,7 @@ fn main() {
             commands::stop_handless_mode,
             commands::resume_cancelled_capture,
             commands::dismiss_cancelled_capture,
+            commands::get_cancelled_capture,
             commands::copy_paste_failure_to_clipboard,
             commands::set_pill_size,
             commands::get_installed_apps,
@@ -580,6 +585,7 @@ fn main() {
             // indefinitely and holding the loaded model's RAM/VRAM.
             if let tauri::RunEvent::Exit = _event {
                 log::info!("app exiting; unloading local models");
+                crate::pipeline::failover::flush_on_exit(_app);
                 crate::system::shutdown_local_models(_app);
                 #[cfg(target_os = "windows")]
                 app_tray::cleanup_runtime_icon_files();

@@ -11,7 +11,7 @@
 
   export let recents: Entry[];
   export let failedEntry: { created_at: string } | null;
-  export let cancelledEntry: { created_at: string } | null;
+  export let cancelledEntry: { created_at: string; kind?: 'cancelled' | 'interrupted' } | null;
   export let loading: boolean;
   export let historyError = '';
   export let onRetryHistory: () => void = () => {};
@@ -373,7 +373,11 @@
           transition:fly={{ y: -10, duration: motionMs(400), easing: expoOut }}
         >
           <div class="day-time">{fmtTime(cancelledEntry.created_at)}</div>
-          <div class="day-text error-msg">You cancelled a recording — pick it back up?</div>
+          <div class="day-text error-msg">
+            {cancelledEntry.kind === 'interrupted'
+              ? 'A dictation was interrupted — pick it back up?'
+              : 'You cancelled a recording — pick it back up?'}
+          </div>
           <div class="row-actions">
             <button
               class="retry-btn"
