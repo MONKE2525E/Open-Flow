@@ -4,7 +4,7 @@ Contexts are Verenu's main way to control what happens in different places. A co
 
 For example, you might create:
 
-- **Development** for your editor and terminal, with Verbatim cleanup and technical vocabulary.
+- **Development** for your editor and terminal, with Off cleanup and technical vocabulary.
 - **Writing** for your document apps, with Medium cleanup and a formal tone.
 - **Support** for your help desk, with custom instructions for dates, names, and reply style.
 

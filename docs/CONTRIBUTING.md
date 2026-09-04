@@ -71,8 +71,9 @@ npm run dev
 
 ### macOS
 
-- Default hold-to-record hotkey is <kbd>Fn</kbd> + <kbd>Control</kbd>.
+- Default hold-to-record hotkey is <kbd>Option</kbd> + <kbd>Space</kbd>.
 - API keys live in Keychain.
+- The global hotkey needs no Input Monitoring permission. Accessibility is used for focused-text reads and text injection.
 - Real macOS testing matters because permissions are part of the feature, not an edge case.
 - Changes that touch hotkeys, injection, onboarding, setup, or key storage should be checked on macOS if they can possibly affect it.
 
@@ -80,7 +81,7 @@ npm run dev
 
 - Keep Tauri. Do not replace the app shell with Electron.
 - Keep API keys out of SQLite, logs, screenshots, fixtures, and test output.
-- Use constants from [`../src-tauri/src/data/store.rs`](../src-tauri/src/data/store.rs) for store keys. Do not add raw string keys.
+- Use constants from [`../src-tauri/src/data/store/mod.rs`](../src-tauri/src/data/store/mod.rs) for store keys. Do not add raw string keys.
 - Keep [`../tests/smoke/`](../tests/smoke/) as a contract. Fix app code when smoke tests fail.
 - Keep dependencies lean. The app has a low idle RAM target.
 - Follow existing Rust, Svelte, TypeScript, and Tailwind patterns before inventing new abstractions.

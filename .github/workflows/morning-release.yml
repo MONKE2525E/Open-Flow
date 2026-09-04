@@ -230,13 +230,13 @@ jobs:
               echo
               echo '1. Download the installer for your platform from the assets below'
               echo '2. Add your API key for Groq, OpenAI, or Google'
-              echo '3. Hold **Ctrl+Win** on Windows or **fn+Control** on macOS and start talking'
+              echo '3. Hold **Ctrl+Win** on Windows or **Option+Space** on macOS and start talking'
               echo '4. Release the hotkey and your cleaned-up text appears in the active app'
               echo
               echo '## Shortcuts'
               echo
               echo '- **Windows hold-to-record** - Hold **Ctrl+Win** to record, release to transcribe and inject'
-              echo '- **macOS hold-to-record** - Hold **fn+Control** to record, release to transcribe and inject'
+              echo '- **macOS hold-to-record** - Hold **Option+Space** to record, release to transcribe and inject'
               echo
               echo '## Lightweight & Local'
               echo
