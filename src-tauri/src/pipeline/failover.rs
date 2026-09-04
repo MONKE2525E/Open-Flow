@@ -610,7 +610,7 @@ impl LiveWriter {
         }
         self.superseded = true;
         delete_committed(&self.root);
-        if let Some(state) = &self.state {
+        let emit_cleared = if let Some(state) = &self.state {
             if let Ok(mut st) = lock_state(state) {
                 let current_id = self.meta.id.as_str();
                 let stale = st
@@ -619,10 +619,19 @@ impl LiveWriter {
                     .is_some_and(|c| c.id != current_id);
                 if stale {
                     st.cancelled_capture = None;
-                    if let Some(app) = &self.app {
-                        state::emit_cancelled_capture_cleared(app);
-                    }
+                    true
+                } else {
+                    false
                 }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if emit_cleared {
+            if let Some(app) = &self.app {
+                state::emit_cancelled_capture_cleared(app);
             }
         }
         log::debug!(

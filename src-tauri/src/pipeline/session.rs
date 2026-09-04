@@ -251,15 +251,22 @@ pub fn start_recording_session_ex(
                     .is_some_and(|audio| audio.duration_ms >= MIN_RECORDING_MS)
             {
                 super::failover::retire_committed();
-                if let Ok(mut st) = lock_state(state) {
+                let emit_cleared = if let Ok(mut st) = lock_state(state) {
                     let current_id = st.failover_session_id.clone();
                     let stale = st.cancelled_capture.as_ref().is_some_and(|c| {
                         current_id.as_ref().is_some_and(|id| &c.id != id)
                     });
                     if stale {
                         st.cancelled_capture = None;
-                        emit_cancelled_capture_cleared(app);
+                        true
+                    } else {
+                        false
                     }
+                } else {
+                    false
+                };
+                if emit_cleared {
+                    emit_cancelled_capture_cleared(app);
                 }
             }
             if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
