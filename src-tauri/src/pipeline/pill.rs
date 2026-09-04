@@ -589,7 +589,7 @@ pub(crate) fn hide_pill(app: &AppHandle) {
 
         pill.emit("pill-state", "idle").ok();
         // Re-enable click-through: after a button-bearing state (handsfree,
-        // error, cancelled, paste_failed) reveal_pill left the window
+        // error, cancelled, interrupted, paste_failed) reveal_pill left the window
         // click-capturing. Idle is invisible, so it must never swallow clicks
         // in the pill's zone even though the pill content has disappeared.
         pill.set_ignore_cursor_events(true).ok();
@@ -607,6 +607,10 @@ pub(crate) fn hide_pill(app: &AppHandle) {
 /// frontend (`PillApp.svelte`), same as `show_error_pill`.
 pub(super) fn show_cancelled_pill(app: &AppHandle) {
     show_pill_msg(app, "cancelled", None);
+}
+
+pub(super) fn show_interrupted_pill(app: &AppHandle) {
+    show_pill_msg(app, "interrupted", None);
 }
 
 /// Shows the pill's "Paste failed" state — injection didn't land (or

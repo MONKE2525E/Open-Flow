@@ -28,6 +28,7 @@ Stored locally in app storage and SQLite:
 - Transcription history
 - Auto-learn events and candidate data
 - Update-dismiss state
+- A short-lived dictation failover spool (dictation-failover/ under the app data directory): in-progress audio so a crash or reboot can offer Continue. Deleted after history is saved, on dismiss, or after 24 hours. Not included in backups or LAN sync.
 
 ### Logs
 
@@ -170,7 +171,7 @@ That said, once data is sent to a third-party AI provider, that provider's reten
 
 | Feature | Stays local | Leaves device |
 | --- | --- | --- |
-| Hold-to-record audio capture | audio before release | nothing until transcription starts |
+| Hold-to-record audio capture | audio before release, plus a local crash-recovery spool until the take is saved, dismissed, or 24 hours old | nothing until transcription starts |
 | Local transcription + Cleanup Off | audio, transcript, settings, and history | nothing after the model download |
 | Local transcription + cloud cleanup | audio, local model, local capture state | transcript text and cleanup context to selected cleanup provider |
 | Cloud transcription | local capture state | audio to selected transcription provider |
