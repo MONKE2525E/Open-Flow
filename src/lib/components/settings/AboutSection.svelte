@@ -224,7 +224,7 @@
 <div class="setting-row" data-setting-target="about-beta">
   <div>
     <div class="label">Beta updates</div>
-    <div class="desc">Try early releases from the development branch. Expect bugs and possible data loss.</div>
+    <div class="desc">Try early releases from the master branch. Expect bugs and possible data loss.</div>
   </div>
   <Toggle checked={betaUpdatesEnabled} onchange={handleBetaUpdatesToggle} label="Beta updates" />
 </div>
@@ -250,7 +250,7 @@
     </div>
     <div class="modal-body">
       <p class="confirm-copy">
-        Beta releases contain unfinished code from the development branch. They can be unstable,
+        Beta releases contain unfinished code from the master branch. They can be unstable,
         break features, or cause data loss. Only enable this if you want to test early builds.
       </p>
     </div>

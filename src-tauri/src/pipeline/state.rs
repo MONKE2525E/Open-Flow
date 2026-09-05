@@ -663,7 +663,11 @@ pub(super) fn emit_pipeline_failed(app: &AppHandle) {
 /// recording was just cancelled and its audio is resumable for
 /// `CANCEL_RESUME_WINDOW`.
 pub(super) fn emit_cancelled_capture(app: &AppHandle, capture: &CancelledCapture) {
-    super::failover::emit_cancelled_payload(app, &capture.created_at_rfc3339, capture.origin.as_str());
+    super::failover::emit_cancelled_payload(
+        app,
+        &capture.created_at_rfc3339,
+        capture.origin.as_str(),
+    );
 }
 
 /// Tells any open window that the current cancelled capture is gone —

@@ -250,6 +250,8 @@
     display: flex;
     flex-direction: column;
     min-height: 100%;
+    container-type: inline-size;
+    container-name: style-page;
   }
 
   .tab-content-area {
@@ -400,6 +402,20 @@
 
   .style-grid.four {
     grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  }
+
+  @container style-page (max-width: 760px) {
+    .style-grid,
+    .style-grid.four {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @container style-page (max-width: 500px) {
+    .style-grid,
+    .style-grid.four {
+      grid-template-columns: 1fr;
+    }
   }
 
   .style-card {

@@ -22,6 +22,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        # Keep these major tags aligned with the current official actions.
 
       - name: Set up Node
         uses: actions/setup-node@v6

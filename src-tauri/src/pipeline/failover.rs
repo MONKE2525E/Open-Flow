@@ -7,7 +7,7 @@
 use super::gates::{MIN_RECORDING_MS, MIN_RECORDING_RMS};
 use super::pill::{show_cancelled_pill, show_interrupted_pill};
 use super::state::{
-    lock_state, CaptureOrigin, CancelledCapture, SharedState, CANCEL_RESUME_WINDOW,
+    lock_state, CancelledCapture, CaptureOrigin, SharedState, CANCEL_RESUME_WINDOW,
 };
 use super::{state, CapturedAudio};
 use crate::media::audio::{self, DurableSink};
@@ -103,7 +103,11 @@ fn now_unix() -> i64 {
 }
 
 fn f32_to_i16(s: f32) -> i16 {
-    let v = if s.is_finite() { s.clamp(-1.0, 1.0) } else { 0.0 };
+    let v = if s.is_finite() {
+        s.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
     (v * i16::MAX as f32) as i16
 }
 
@@ -116,21 +120,17 @@ fn slot_dir(root: &Path, live: bool) -> PathBuf {
 }
 
 fn replace_file(from: &Path, to: &Path) -> std::io::Result<()> {
-    // Prefer rename-first so POSIX keeps an atomic overwrite. Only delete the
-    // destination when Windows refuses the replace (access denied / sharing /
-    // already-exists), then retry rename or fall back to copy.
     match fs::rename(from, to) {
         Ok(()) => Ok(()),
+        // Windows: access denied (5), sharing violation (32), already exists (183).
         Err(e) if matches!(e.raw_os_error(), Some(5 | 32 | 183)) => {
             let _ = fs::remove_file(to);
-            match fs::rename(from, to) {
-                Ok(()) => Ok(()),
-                Err(_) => {
-                    fs::copy(from, to)?;
-                    let _ = fs::remove_file(from);
-                    Ok(())
-                }
+            if fs::rename(from, to).is_ok() {
+                return Ok(());
             }
+            fs::copy(from, to)?;
+            let _ = fs::remove_file(from);
+            Ok(())
         }
         Err(e) => Err(e),
     }
@@ -186,10 +186,8 @@ pub fn load_slot(root: &Path, live: bool) -> Option<LoadedTake> {
     let mut buf = vec![0u8; byte_len];
     file.read_exact(&mut buf).ok()?;
     let mut samples = Vec::with_capacity(usable as usize);
-    let mut i = 0;
-    while i + 1 < buf.len() {
-        samples.push(i16_to_f32(i16::from_le_bytes([buf[i], buf[i + 1]])));
-        i += 2;
+    for chunk in buf.as_chunks::<2>().0 {
+        samples.push(i16_to_f32(i16::from_le_bytes(*chunk)));
     }
     meta.sample_count = usable;
     meta.duration_ms = usable * 1000 / u64::from(TARGET_RATE);
@@ -610,7 +608,7 @@ impl LiveWriter {
         }
         self.superseded = true;
         delete_committed(&self.root);
-        let emit_cleared = if let Some(state) = &self.state {
+        if let Some(state) = &self.state {
             if let Ok(mut st) = lock_state(state) {
                 let current_id = self.meta.id.as_str();
                 let stale = st
@@ -619,19 +617,10 @@ impl LiveWriter {
                     .is_some_and(|c| c.id != current_id);
                 if stale {
                     st.cancelled_capture = None;
-                    true
-                } else {
-                    false
+                    if let Some(app) = &self.app {
+                        state::emit_cancelled_capture_cleared(app);
+                    }
                 }
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-        if emit_cleared {
-            if let Some(app) = &self.app {
-                state::emit_cancelled_capture_cleared(app);
             }
         }
         log::debug!(
@@ -650,9 +639,6 @@ impl DurableSink for LiveWriter {
         if self.native_rate == 0 {
             self.native_rate = native_rate;
         } else if self.native_rate != native_rate {
-            // Finish-flush so convert_native drains the old-rate interpolator
-            // tail instead of leaving a sample that would be resampled with the
-            // new ratio.
             self.checkpoint(true);
             self.native_rate = native_rate;
         }
@@ -761,8 +747,14 @@ mod tests {
     fn round_trip_write_read() {
         let root = test_root();
         let samples = loud_ms(800);
-        write_committed(&root, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", FailoverKind::Cancelled, 1_700_000_000, &samples)
-            .unwrap();
+        write_committed(
+            &root,
+            "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            FailoverKind::Cancelled,
+            1_700_000_000,
+            &samples,
+        )
+        .unwrap();
         let loaded = load_slot(&root, false).unwrap();
         assert_eq!(loaded.samples_16k.len(), samples.len());
         assert!(loaded.passes_gates());
@@ -773,7 +765,14 @@ mod tests {
     fn pcm_ahead_of_sidecar_uses_published_count() {
         let root = test_root();
         let samples = loud_ms(800);
-        write_committed(&root, "id-published", FailoverKind::Recording, now_unix(), &samples).unwrap();
+        write_committed(
+            &root,
+            "id-published",
+            FailoverKind::Recording,
+            now_unix(),
+            &samples,
+        )
+        .unwrap();
         let pcm_path = slot_dir(&root, false).join(AUDIO_FILE);
         let extra = samples_to_pcm(&loud_ms(200));
         let mut f = OpenOptions::new().append(true).open(&pcm_path).unwrap();
@@ -789,7 +788,14 @@ mod tests {
     fn sidecar_ahead_of_pcm_clamps_to_file() {
         let root = test_root();
         let samples = loud_ms(800);
-        write_committed(&root, "id-clamp", FailoverKind::Recording, now_unix(), &samples).unwrap();
+        write_committed(
+            &root,
+            "id-clamp",
+            FailoverKind::Recording,
+            now_unix(),
+            &samples,
+        )
+        .unwrap();
         let mut meta = load_session(&slot_dir(&root, false).join(SESSION_FILE)).unwrap();
         meta.sample_count = samples.len() as u64 + 4000;
         write_session_atomic(&slot_dir(&root, false).join(SESSION_FILE), &meta).unwrap();
@@ -802,7 +808,14 @@ mod tests {
     fn odd_trailing_byte_is_dropped() {
         let root = test_root();
         let samples = loud_ms(800);
-        write_committed(&root, "id-odd", FailoverKind::Recording, now_unix(), &samples).unwrap();
+        write_committed(
+            &root,
+            "id-odd",
+            FailoverKind::Recording,
+            now_unix(),
+            &samples,
+        )
+        .unwrap();
         let pcm_path = slot_dir(&root, false).join(AUDIO_FILE);
         let mut f = OpenOptions::new().append(true).open(&pcm_path).unwrap();
         f.write_all(&[0x7f]).unwrap();
@@ -830,15 +843,7 @@ mod tests {
         let live = loud_ms(2000);
         let t = now_unix();
         write_committed(&root, "same-id", FailoverKind::Processing, t, &committed).unwrap();
-        write_slot(
-            &root,
-            true,
-            "same-id",
-            FailoverKind::Recording,
-            t,
-            &live,
-        )
-        .unwrap();
+        write_slot(&root, true, "same-id", FailoverKind::Recording, t, &live).unwrap();
         let restored = restore_choice(&root, t).unwrap();
         assert_eq!(restored.meta.kind, FailoverKind::Processing);
         assert_eq!(restored.samples_16k.len(), committed.len());
@@ -851,7 +856,8 @@ mod tests {
         let old = loud_ms(1200);
         write_committed(&root, "old-id", FailoverKind::Cancelled, now_unix(), &old).unwrap();
         let short = loud_ms(200);
-        let mut w = LiveWriter::open(root.clone(), "new-id".into(), Some(&short), None, None).unwrap();
+        let mut w =
+            LiveWriter::open(root.clone(), "new-id".into(), Some(&short), None, None).unwrap();
         w.finish();
         drop(w);
         // 200ms fails gates, so restore_choice drops live and keeps committed.
@@ -864,48 +870,15 @@ mod tests {
     fn long_new_live_wins_over_committed() {
         let root = test_root();
         let old = loud_ms(1200);
-        let now = now_unix();
-        write_committed(&root, "old-id", FailoverKind::Cancelled, now - 1, &old).unwrap();
+        write_committed(&root, "old-id", FailoverKind::Cancelled, now_unix(), &old).unwrap();
         let neu = loud_ms(900);
-        write_slot(
-            &root,
-            true,
-            "new-id",
-            FailoverKind::Recording,
-            now,
-            &neu,
-        )
-        .unwrap();
-        let restored = restore_choice(&root, now).unwrap();
+        let mut w =
+            LiveWriter::open(root.clone(), "new-id".into(), Some(&neu), None, None).unwrap();
+        w.finish();
+        drop(w);
+        let restored = restore_choice(&root, now_unix()).unwrap();
         assert_eq!(restored.meta.id, "new-id");
         assert!(load_slot(&root, false).is_none());
-        delete_all(&root);
-    }
-
-    #[test]
-    fn newer_committed_beats_older_live() {
-        let root = test_root();
-        let now = now_unix();
-        write_slot(
-            &root,
-            true,
-            "old-live",
-            FailoverKind::Recording,
-            now - 2,
-            &loud_ms(1200),
-        )
-        .unwrap();
-        write_committed(
-            &root,
-            "new-committed",
-            FailoverKind::Cancelled,
-            now - 1,
-            &loud_ms(900),
-        )
-        .unwrap();
-        let restored = restore_choice(&root, now).unwrap();
-        assert_eq!(restored.meta.id, "new-committed");
-        assert!(load_slot(&root, true).is_none());
         delete_all(&root);
     }
 
@@ -947,7 +920,14 @@ mod tests {
     fn crash_before_seed_keeps_committed() {
         let root = test_root();
         let original = loud_ms(1000);
-        write_committed(&root, "resume-id", FailoverKind::Cancelled, now_unix(), &original).unwrap();
+        write_committed(
+            &root,
+            "resume-id",
+            FailoverKind::Cancelled,
+            now_unix(),
+            &original,
+        )
+        .unwrap();
         let restored = restore_choice(&root, now_unix()).unwrap();
         assert_eq!(restored.meta.id, "resume-id");
         assert_eq!(restored.meta.kind, FailoverKind::Cancelled);

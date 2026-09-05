@@ -49,7 +49,10 @@ pub(crate) use pill::{
     emit_pill_context, emit_pill_stage, hide_pill, pill_wants_repair_focus,
     show_clipboard_warning_pill, show_copied_pill, show_pill, update_pill_state,
 };
-use pill::{reject_with_pill, show_error_pill, show_paste_failed_pill};
+use pill::{
+    reject_with_pill, show_cancelled_pill, show_error_pill, show_interrupted_pill,
+    show_paste_failed_pill,
+};
 pub(crate) use pill_position::{
     apply_pill_placement, placement_for_current_monitor, PillPlacement,
 };

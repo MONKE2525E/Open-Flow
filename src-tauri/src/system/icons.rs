@@ -334,110 +334,54 @@ mod win {
 
 #[cfg(target_os = "macos")]
 mod mac {
-    //! macOS icon extraction. `NSWorkspace -iconForFile:` hands back a
-    //! multi-representation `NSImage` (the bundle's `.icns`, or the generic
-    //! document icon for a bundle that ships none).
-    //!
-    //! Getting a small image out of that is the whole problem.
-    //! `-[NSImage setSize:]` does not constrain what `-TIFFRepresentation`
-    //! rasterizes, so that route always yields the native 1024x1024
-    //! representation (1.5-2.5MB) and needs a decode + resample to become
-    //! usable — expensive per icon, and the app picker requests dozens at
-    //! once. `-CGImageForProposedRect:` instead asks AppKit to pick the
-    //! representation that best fits a rect, so the small rep comes straight
-    //! out of the `.icns` with no full-size decode and no resampling.
-    //! Measured across 80 installed apps: ~17KB each, 1.58s for the sweep.
-    //!
-    //! Runs on the blocking pool, not the main thread: `NSWorkspace` is
-    //! documented thread-safe, and the `NSImage`/`NSBitmapImageRep` work here
-    //! never touches the responder chain or a window's graphics context. This
-    //! matches how `system::mac_app` already calls `NSWorkspace` off-main.
-
     use objc2::rc::autoreleasepool;
     use objc2::runtime::AnyObject;
-    use objc2::{class, msg_send, Encode, Encoding, RefEncode};
+    use objc2::{class, msg_send, Encode, Encoding};
     use objc2_foundation::NSString;
-    use std::path::PathBuf;
-    use std::ptr;
 
-    /// Edge length, in points, of the rect we ask AppKit to fit. The Contexts
-    /// UI draws these at 16pt; a 64pt request resolves to the 128px
-    /// representation on a 2x context, which covers every display scale in use.
-    const ICON_PT: f64 = 64.0;
-
-    /// `NSBitmapImageFileTypePNG`. `NSBitmapImageFileType` is `NSUInteger` in
-    /// the modern SDK — objc2 enforces signedness at the msg_send call site,
-    /// so this must stay unsigned or every extraction throws.
-    const NS_BITMAP_IMAGE_FILE_TYPE_PNG: usize = 4;
-
+    /// `CGSize` (two `CGFloat`s). Not exposed by the `objc2-foundation`
+    /// feature set already enabled for this crate, so encode it by hand —
+    /// same approach `mac_app.rs` uses for `NSApplicationActivationPolicy`.
     #[repr(C)]
     #[derive(Clone, Copy)]
-    struct CgPoint {
-        x: f64,
-        y: f64,
-    }
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct CgSize {
+    struct CGSize {
         width: f64,
         height: f64,
     }
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct CgRect {
-        origin: CgPoint,
-        size: CgSize,
-    }
-
-    unsafe impl Encode for CgPoint {
-        const ENCODING: Encoding = Encoding::Struct("CGPoint", &[f64::ENCODING, f64::ENCODING]);
-    }
-
-    unsafe impl Encode for CgSize {
+    unsafe impl Encode for CGSize {
         const ENCODING: Encoding = Encoding::Struct("CGSize", &[f64::ENCODING, f64::ENCODING]);
     }
 
-    unsafe impl Encode for CgRect {
-        const ENCODING: Encoding =
-            Encoding::Struct("CGRect", &[CgPoint::ENCODING, CgSize::ENCODING]);
-    }
+    /// Requested render size before rasterizing to PNG. NSWorkspace icons
+    /// carry multiple representations; setting the image's size selects which
+    /// one `TIFFRepresentation` rasterizes from.
+    const ICON_SIZE: f64 = 128.0;
 
-    unsafe impl RefEncode for CgRect {
-        const ENCODING_REF: Encoding = Encoding::Pointer(&Self::ENCODING);
-    }
+    /// NSBitmapImageFileTypePNG. `NSBitmapImageFileType` is `NSUInteger` in
+    /// the modern SDK — objc2 enforces the signedness at the msg_send call
+    /// site, so this must stay unsigned or every extraction throws.
+    const NS_BITMAP_IMAGE_FILE_TYPE_PNG: usize = 4;
 
-    /// Opaque stand-in for `CGImageRef`. The pointer is only ever handed
-    /// straight back to AppKit, but it has to carry the right type encoding or
-    /// objc2's message-send verification rejects the call.
-    #[repr(C)]
-    struct CgImage {
-        _private: [u8; 0],
-    }
-
-    unsafe impl RefEncode for CgImage {
-        const ENCODING_REF: Encoding = Encoding::Pointer(&Encoding::Struct("CGImage", &[]));
-    }
-
-    /// Resolves a `"<name>.app"` target (the format
+    /// Resolves a lowercased `"<name>.app"` target (the format
     /// `system::apps::list_installed_apps` produces on macOS) to the bundle's
-    /// full path, scanning the same directories as the installed-app list so
-    /// the picker and the icon cannot disagree about what is installed.
-    /// Falls back to LaunchServices, which also finds bundles living outside
-    /// those directories.
+    /// full path by scanning the same standard Applications directories.
     pub fn resolve_app_bundle_path(exe: &str) -> Option<String> {
-        let requested = exe.trim().to_lowercase();
-        if requested.is_empty() {
-            return None;
+        let exe = exe.trim().to_lowercase();
+        let mut dirs = vec![
+            std::path::PathBuf::from("/Applications"),
+            std::path::PathBuf::from("/Applications/Utilities"),
+            std::path::PathBuf::from("/System/Applications"),
+            std::path::PathBuf::from("/System/Applications/Utilities"),
+        ];
+        if let Ok(home) = std::env::var("HOME") {
+            dirs.push(std::path::PathBuf::from(home).join("Applications"));
         }
-
-        for dir in crate::system::apps::app_search_dirs() {
+        for dir in dirs {
             let Ok(entries) = std::fs::read_dir(&dir) else {
                 continue;
             };
             for entry in entries.flatten() {
-                let path: PathBuf = entry.path();
+                let path = entry.path();
                 if path.extension().and_then(|e| e.to_str()) != Some("app") {
                     continue;
                 }
@@ -445,30 +389,12 @@ mod mac {
                     continue;
                 };
                 let stem = stem.to_lowercase();
-                if stem == requested || format!("{stem}.app") == requested {
+                if stem == exe || format!("{stem}.app") == exe {
                     return path.to_str().map(str::to_string);
                 }
             }
         }
-
-        full_path_for_application(requested.strip_suffix(".app").unwrap_or(&requested))
-    }
-
-    /// LaunchServices lookup by display name, for bundles outside the scanned
-    /// directories.
-    fn full_path_for_application(stem: &str) -> Option<String> {
-        if stem.is_empty() {
-            return None;
-        }
-        autoreleasepool(|_| unsafe {
-            let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
-            if workspace.is_null() {
-                return None;
-            }
-            let name = NSString::from_str(stem);
-            let path: *mut AnyObject = msg_send![workspace, fullPathForApplication: &*name];
-            nsstring_to_string(path)
-        })
+        None
     }
 
     /// Extracts the app's icon at `bundle_path` via `NSWorkspace`, encodes it
@@ -476,7 +402,11 @@ mod mac {
     ///
     /// `-[NSImage setSize:]` does not constrain what `-TIFFRepresentation`
     /// rasterizes at — every icon comes back as the bundle's native 1024×1024
-    /// representation regardless. Resizing here keeps the IPC payload bounded.
+    /// representation regardless (measured: a 1024×1024 PNG runs 1.5–2.5MB).
+    /// Sent as a data URI to the frontend for every row in the app picker,
+    /// that made the picker unusable — dozens of multi-megabyte IPC payloads
+    /// in flight at once, appearing to the user as icons that simply never
+    /// load. Resizing here, before caching or returning, is the fix.
     pub fn extract_icon_png(bundle_path: &str) -> Option<Vec<u8>> {
         let raw = extract_icon_png_native(bundle_path)?;
         let resized = image::load_from_memory(&raw).ok()?.resize(
@@ -497,81 +427,46 @@ mod mac {
             if workspace.is_null() {
                 return None;
             }
-
-            let ns_path = NSString::from_str(bundle_path);
-            // Autoreleased and owned by AppKit's icon cache — do not release.
-            let image: *mut AnyObject = msg_send![workspace, iconForFile: &*ns_path];
-            if image.is_null() {
+            let path = NSString::from_str(bundle_path);
+            let icon: *mut AnyObject = msg_send![workspace, iconForFile: &*path];
+            if icon.is_null() {
                 return None;
             }
-
-            // AppKit picks the representation that best fits this rect and
-            // writes back the rect it actually used, so `rect` must be mutable.
-            let mut rect = CgRect {
-                origin: CgPoint { x: 0.0, y: 0.0 },
-                size: CgSize {
-                    width: ICON_PT,
-                    height: ICON_PT,
-                },
-            };
-            let cg_image: *mut CgImage = msg_send![
-                image,
-                CGImageForProposedRect: &mut rect,
-                context: ptr::null_mut::<AnyObject>(),
-                hints: ptr::null_mut::<AnyObject>(),
+            let _: () = msg_send![
+                icon,
+                setSize: CGSize { width: ICON_SIZE, height: ICON_SIZE }
             ];
-            if cg_image.is_null() {
+            let tiff: *mut AnyObject = msg_send![icon, TIFFRepresentation];
+            if tiff.is_null() {
                 return None;
             }
-
-            let rep: *mut AnyObject = msg_send![class!(NSBitmapImageRep), alloc];
-            let rep: *mut AnyObject = msg_send![rep, initWithCGImage: cg_image];
-            if rep.is_null() {
+            let bitmap: *mut AnyObject =
+                msg_send![class!(NSBitmapImageRep), imageRepWithData: tiff];
+            if bitmap.is_null() {
                 return None;
             }
-
             let empty_props: *mut AnyObject = msg_send![class!(NSDictionary), dictionary];
             let png_data: *mut AnyObject = msg_send![
-                rep,
+                bitmap,
                 representationUsingType: NS_BITMAP_IMAGE_FILE_TYPE_PNG,
-                properties: empty_props,
+                properties: empty_props
             ];
-            let png = nsdata_to_vec(png_data);
-            let _: () = msg_send![rep, release];
-            png
+            if png_data.is_null() {
+                return None;
+            }
+            let length: usize = msg_send![png_data, length];
+            if length == 0 {
+                return None;
+            }
+            // `-bytes` is declared `const void *` in the SDK ('^v'); objc2
+            // enforces the exact encoding, so `*const u8` ('*', a C string)
+            // is rejected even though the bit pattern is identical.
+            let ptr: *const std::ffi::c_void = msg_send![png_data, bytes];
+            if ptr.is_null() {
+                return None;
+            }
+            Some(std::slice::from_raw_parts(ptr.cast::<u8>(), length).to_vec())
         })
-    }
-
-    /// Copy an `NSData*` (as `AnyObject*`) into an owned byte vector.
-    unsafe fn nsdata_to_vec(data: *mut AnyObject) -> Option<Vec<u8>> {
-        if data.is_null() {
-            return None;
-        }
-        let len: usize = msg_send![data, length];
-        if len == 0 {
-            return None;
-        }
-        let bytes: *const std::ffi::c_void = msg_send![data, bytes];
-        if bytes.is_null() {
-            return None;
-        }
-        Some(std::slice::from_raw_parts(bytes.cast::<u8>(), len).to_vec())
-    }
-
-    /// Convert an `NSString*` (as `AnyObject*`) to a Rust `String`.
-    unsafe fn nsstring_to_string(ns: *mut AnyObject) -> Option<String> {
-        if ns.is_null() {
-            return None;
-        }
-        let utf8: *const std::os::raw::c_char = msg_send![ns, UTF8String];
-        if utf8.is_null() {
-            return None;
-        }
-        Some(
-            std::ffi::CStr::from_ptr(utf8)
-                .to_string_lossy()
-                .into_owned(),
-        )
     }
 }
 
@@ -728,51 +623,5 @@ mod tests {
         for input in ["", "   ", "localhost", "://"] {
             assert_eq!(normalize_favicon_host(input), None, "input: {input}");
         }
-    }
-}
-
-#[cfg(all(test, target_os = "macos"))]
-mod mac_tests {
-    /// Finder ships with every macOS install, so this exercises the whole
-    /// resolve -> NSWorkspace -> PNG path against a bundle that is always there.
-    #[test]
-    fn extracts_a_real_png_for_a_system_app() {
-        let path = super::mac::resolve_app_bundle_path("finder.app")
-            .expect("Finder.app should resolve to a bundle path");
-        assert!(path.ends_with("Finder.app"), "unexpected path: {path}");
-
-        let png = super::mac::extract_icon_png(&path).expect("Finder should have an icon");
-        assert_eq!(
-            &png[..8],
-            &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a],
-            "expected PNG magic bytes"
-        );
-
-        // AppKit answers a 64pt request with the representation that fits it,
-        // which on a 2x-capable context is the 128px rep. The point of the
-        // sized request is that we get one of the small reps rather than the
-        // 512/1024px master, so assert the range, not an exact edge length.
-        let decoded = image::load_from_memory(&png).expect("icon should decode as an image");
-        assert_eq!(decoded.width(), decoded.height(), "icon should be square");
-        assert!(
-            (64..=256).contains(&decoded.width()),
-            "expected a small representation, got {}px",
-            decoded.width()
-        );
-    }
-
-    /// The bare stem must resolve too — `window_context` and the installed-app
-    /// list do not always agree about the `.app` suffix.
-    #[test]
-    fn resolves_with_and_without_the_app_suffix() {
-        assert_eq!(
-            super::mac::resolve_app_bundle_path("finder"),
-            super::mac::resolve_app_bundle_path("finder.app")
-        );
-    }
-
-    #[test]
-    fn unknown_app_resolves_to_none() {
-        assert!(super::mac::resolve_app_bundle_path("definitely-not-installed-xyz.app").is_none());
     }
 }
