@@ -4,10 +4,11 @@ This document is the practical release checklist for Verenu. For release note wo
 
 ## Branch Flow
 
-1. Land normal work on `dev`.
-2. Review and test `dev`.
-3. Merge `dev` into `master` when it is stable.
-4. Cut the release from the stabilized branch.
+1. Merge reviewed pull requests directly into `master`.
+2. Keep `master` green with the required CI checks.
+3. The scheduled morning nightly release inspects `master` and publishes the
+   next prerelease when enough changes have accumulated.
+4. Use the manual installer workflow when an on-demand build is needed.
 
 ## Version Bump
 
@@ -35,7 +36,7 @@ For UI-affecting work, also run the relevant Playwright smoke or integration tes
 
 ## Build Installers
 
-The manual GitHub Actions workflow [`../.github/workflows/build-installers.yml`](../.github/workflows/build-installers.yml) builds:
+The manual GitHub Actions workflow [`../.github/workflows/build-installers.yml`](../.github/workflows/build-installers.yml) checks out `master` and builds:
 
 - Windows NSIS installer
 - Windows MSI installer

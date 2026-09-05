@@ -148,14 +148,14 @@ For more details: [Install Verenu](docs/INSTALL.md), [Contributing](docs/CONTRIB
 
 ## Release Flow
 
-Most day-to-day work lands on `dev` first.
+`master` is the only shared integration and release branch.
 
 The normal flow is:
 
-1. Commit to `dev` for most changes.
-2. Review and test on `dev`.
-3. Merge `dev` into `master` when it is ready.
-4. Cut and ship the release from there.
+1. Create a short-lived feature or fix branch from `master`.
+2. Open a pull request directly into `master`.
+3. Let the required CI checks run, review the change, and merge it into `master`.
+4. The morning nightly workflow and manual installer workflow use `master`.
 
 If you are contributing, read [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) before you start.
 
