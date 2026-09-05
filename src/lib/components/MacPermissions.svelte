@@ -3,6 +3,7 @@
   import { fly, slide } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { invoke, listen } from '../tauri';
+  import { startPolling } from '../polling';
   import { isMac } from '../platform';
   import { motionMs } from '../motion';
   import { extractIpcErrorMessage } from '../errors';
@@ -110,7 +111,7 @@
   let restarting = $state(false);
 
   let accessibilityActionTaken = $state(false);
-  let watchInterval: ReturnType<typeof setInterval> | null = null;
+  let permissionPoll: ReturnType<typeof startPolling> | null = null;
   let restartTimeout: ReturnType<typeof setTimeout> | null = null;
   let refreshAnimationTimeout: ReturnType<typeof setTimeout> | null = null;
   let unlistenError: (() => void) | null = null;
@@ -272,21 +273,19 @@
 
   function startWatch() {
     if (!isMac) return;
-    if (watchInterval !== null) return;
-    watchInterval = setInterval(async () => {
+    if (permissionPoll !== null) return;
+    permissionPoll = startPolling(async () => {
       // Do not let a passive poll race an explicit native permission prompt.
       // The prompt handlers own the next snapshot generation and will apply
       // their post-request result when the OS callback completes.
       if (permissionsLoading || accessibilityPrompting || microphoneRequesting || notificationRequesting) return;
       await refreshMacPermissions(true);
-    }, WATCH_INTERVAL_MS);
+    }, WATCH_INTERVAL_MS, { immediate: false });
   }
 
   function stopWatch() {
-    if (watchInterval !== null) {
-      clearInterval(watchInterval);
-      watchInterval = null;
-    }
+    permissionPoll?.stop();
+    permissionPoll = null;
   }
 
   function looksLikePermissionError(message: string): boolean {

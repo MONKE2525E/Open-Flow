@@ -236,6 +236,31 @@ pub fn clear_cancelled_capture(state: &SharedState) {
     }
 }
 
+/// Expiry must release audio even if the user never invokes Retry or Resume.
+/// Keep the small metadata record so existing expired-retry errors and durable
+/// recovery bookkeeping retain their semantics. Other live owners keep their
+/// Arc/Bytes handles, so an in-flight pipeline is unaffected.
+pub fn release_expired_capture_audio(state: &SharedState) {
+    fn release(audio: &mut CapturedAudio) {
+        if !audio.wav.is_empty() || !audio.samples_16k.is_empty() {
+            audio.wav = bytes::Bytes::new();
+            audio.samples_16k = Arc::new(Vec::new());
+        }
+    }
+    if let Ok(mut st) = lock_state(state) {
+        if let Some(retry) = st.retry_capture.as_mut() {
+            if retry.captured_at.elapsed() > RETRY_WINDOW {
+                release(&mut retry.audio);
+            }
+        }
+        if let Some(cancelled) = st.cancelled_capture.as_mut() {
+            if cancelled.captured_at.elapsed() >= CANCEL_RESUME_WINDOW {
+                release(&mut cancelled.audio);
+            }
+        }
+    }
+}
+
 /// Attaches `audio` as the prepend audio of an already-reserved `Starting`
 /// lifecycle (see `commands::recording::resume_cancelled_capture`).
 pub fn set_starting_prepend_audio(state: &SharedState, audio: CapturedAudio) {
@@ -768,6 +793,55 @@ mod tests {
         }
         clear_cancelled_capture(&state);
         assert!(lock_state(&state).unwrap().cancelled_capture.is_none());
+    }
+
+    #[test]
+    fn expired_audio_is_released_without_consuming_fresh_or_live_owners() {
+        let state = fresh_state();
+        let audio = fake_audio(500);
+        let live_owner = audio.samples_16k.clone();
+        {
+            let mut st = lock_state(&state).unwrap();
+            st.cancelled_capture = Some(CancelledCapture {
+                audio: audio.clone(),
+                captured_at: std::time::Instant::now(),
+                id: "expiry-test".into(),
+                origin: CaptureOrigin::UserCancelled,
+                created_at_rfc3339: "2026-01-01T00:00:00Z".into(),
+                started_at_unix: 0,
+            });
+            st.retry_capture = Some(RetryCapture {
+                audio,
+                captured_at: std::time::Instant::now()
+                    - RETRY_WINDOW
+                    - std::time::Duration::from_secs(1),
+                target: WindowTarget::default(),
+                process_name: String::new(),
+                context_id: 1,
+                profile: String::new(),
+                app_context: None,
+                caps_lock_on: false,
+            });
+        }
+        release_expired_capture_audio(&state);
+        {
+            let mut st = lock_state(&state).unwrap();
+            assert!(st
+                .retry_capture
+                .as_ref()
+                .unwrap()
+                .audio
+                .samples_16k
+                .is_empty());
+            let capture = st.cancelled_capture.as_mut().unwrap();
+            assert_eq!(capture.audio.samples_16k.len(), 16);
+            capture.captured_at = std::time::Instant::now() - CANCEL_RESUME_WINDOW;
+        }
+        release_expired_capture_audio(&state);
+        assert_eq!(Arc::strong_count(&live_owner), 1);
+        assert_eq!(live_owner.len(), 16);
+        assert!(peek_cancelled_capture_if_fresh(&state).is_none());
+        assert!(lock_state(&state).unwrap().retry_capture.is_some());
     }
 
     #[test]

@@ -277,10 +277,12 @@ fn main() {
             }
             let local_stt_manager = local_transcription_manager.clone();
             let local_llm_manager = local_cleanup_manager.clone();
+            let capture_state = shared.clone();
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    pipeline::release_expired_capture_audio(&capture_state);
                     // && (not ||): either manager signalling shutdown on its
                     // own must not stop monitoring the other still-active one.
                     if local_stt_manager

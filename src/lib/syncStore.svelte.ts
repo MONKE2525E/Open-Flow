@@ -4,6 +4,7 @@
 import { invoke, listen } from './tauri';
 import { fetchSnippets, fetchDictionary } from './stores.svelte';
 import { loadContexts } from './contextsStore.svelte';
+import { startPolling } from './polling';
 
 export interface SyncDeviceInfo {
   uuid: string;
@@ -69,39 +70,40 @@ export function thisDeviceName(): string {
 
 /** Starts the backend event listeners. Returns a cleanup function. */
 export function startSyncListeners(): () => void {
-  void refreshSyncStatus();
-
   // Events reduce latency, but correctness does not depend on catching one.
   // Poll backend-owned state so a reload or suspended WebView can always
   // reconstruct an active incoming or outgoing pairing session.
-  const poll = window.setInterval(() => {
-    void refreshSyncStatus();
-  }, 1000);
+  const poll = startPolling(refreshSyncStatus,
+    () => syncStore.status?.pairing ? 1000 : 30_000,
+    { hiddenIntervalMs: 30_000, immediate: false });
 
   const unlisteners: Array<Promise<() => void>> = [
     listen('verenu:sync-devices-changed', () => {
-      void refreshSyncStatus();
+      poll.request();
     }),
     listen('verenu:sync-status', () => {
-      void refreshSyncStatus();
+      poll.request();
     }),
     listen<{ uuid: string; name: string }>('verenu:sync-pair-request', () => {
-      void refreshSyncStatus();
+      poll.request();
     }),
     listen<{ uuid: string; ok: boolean; message: string }>('verenu:sync-pair-result', () => {
-      void refreshSyncStatus();
+      poll.request();
     }),
     listen<{ tables: string[] }>('verenu:sync-data-changed', (event) => {
       const tables = event.payload.tables ?? [];
       if (tables.includes('dictionary')) void fetchDictionary();
       if (tables.includes('snippets')) void fetchSnippets();
       if (tables.includes('contexts')) void loadContexts(true);
-      void refreshSyncStatus();
+      poll.request();
     }),
   ];
+  // Reconstruct after registration, closing the startup event gap. This also
+  // runs when started in the tray, where incoming pairing must stay available.
+  void Promise.allSettled(unlisteners).then(() => poll.request());
 
   return () => {
-    window.clearInterval(poll);
+    poll.stop();
     for (const promise of unlisteners) {
       void promise.then((unlisten) => unlisten()).catch(() => {});
     }
