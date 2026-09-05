@@ -366,6 +366,7 @@ mod mac {
     /// `system::apps::list_installed_apps` produces on macOS) to the bundle's
     /// full path by scanning the same standard Applications directories.
     pub fn resolve_app_bundle_path(exe: &str) -> Option<String> {
+        let exe = exe.trim().to_lowercase();
         let mut dirs = vec![
             std::path::PathBuf::from("/Applications"),
             std::path::PathBuf::from("/Applications/Utilities"),

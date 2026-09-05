@@ -120,11 +120,14 @@ fn slot_dir(root: &Path, live: bool) -> PathBuf {
 }
 
 fn replace_file(from: &Path, to: &Path) -> std::io::Result<()> {
-    let _ = fs::remove_file(to);
     match fs::rename(from, to) {
         Ok(()) => Ok(()),
         // Windows: access denied (5), sharing violation (32), already exists (183).
         Err(e) if matches!(e.raw_os_error(), Some(5 | 32 | 183)) => {
+            let _ = fs::remove_file(to);
+            if fs::rename(from, to).is_ok() {
+                return Ok(());
+            }
             fs::copy(from, to)?;
             let _ = fs::remove_file(from);
             Ok(())
@@ -332,7 +335,7 @@ pub fn restore_choice(root: &Path, now_unix: i64) -> Option<LoadedTake> {
             }
         }
         (Some(l), Some(c)) => {
-            if l.duration_ms() >= MIN_RECORDING_MS {
+            if l.meta.started_at_unix >= c.meta.started_at_unix {
                 delete_committed(root);
                 Some(l)
             } else {
@@ -634,6 +637,9 @@ impl DurableSink for LiveWriter {
             return;
         }
         if self.native_rate == 0 {
+            self.native_rate = native_rate;
+        } else if self.native_rate != native_rate {
+            self.checkpoint(true);
             self.native_rate = native_rate;
         }
         self.native_tail.extend_from_slice(native_samples);
