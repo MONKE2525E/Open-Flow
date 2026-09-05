@@ -10,10 +10,10 @@
 //! - Failed attempts back off exponentially up to 10 minutes.
 
 use anyhow::{anyhow, Result};
-use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+use mdns_sd::{IfKind, IfPredicate, ServiceDaemon, ServiceEvent, ServiceInfo};
 use rusqlite::OptionalExtension;
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -40,6 +40,65 @@ const PAIRING_PROMPT_LIFETIME: Duration = Duration::from_secs(180);
 const MAX_BACKOFF: Duration = Duration::from_secs(600);
 const PRIVATE_PORT_START: u16 = 49_152;
 const PRIVATE_PORT_COUNT: u32 = 16_384;
+const VIRTUAL_INTERFACE_MARKERS: &[&str] = &[
+    "tailscale",
+    "wireguard",
+    "zerotier",
+    "hamachi",
+    "openvpn",
+    "anyconnect",
+    "wintun",
+    "hyper-v",
+    "hyperv",
+    "vethernet",
+    "virtualbox",
+    "vmware",
+    "virtual",
+    "docker",
+    "wsl",
+    "teredo",
+    "isatap",
+];
+
+fn is_tailscale_address(address: Ipv4Addr) -> bool {
+    let [first, second, ..] = address.octets();
+    first == 100 && (64..=127).contains(&second)
+}
+
+fn is_link_local_address(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => address.is_link_local(),
+        IpAddr::V6(address) => address.is_unicast_link_local(),
+    }
+}
+
+fn is_discovery_advertised_address_allowed(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => {
+            !address.is_loopback()
+                && !address.is_unspecified()
+                && !address.is_link_local()
+                && !is_tailscale_address(address)
+        }
+        IpAddr::V6(_) => false,
+    }
+}
+
+pub(crate) fn is_discovery_interface_allowed(name: &str, address: IpAddr, is_p2p: bool) -> bool {
+    if is_p2p || address.is_loopback() || address.is_unspecified() || is_link_local_address(address)
+    {
+        return false;
+    }
+
+    if matches!(address, IpAddr::V4(address) if is_tailscale_address(address)) {
+        return false;
+    }
+
+    let normalized_name = name.trim().to_ascii_lowercase();
+    !VIRTUAL_INTERFACE_MARKERS
+        .iter()
+        .any(|marker| normalized_name.contains(marker))
+}
 
 /// Keep a device on the same private TCP port across app restarts. mDNS
 /// caches can retain the previous advertisement for part of its TTL; a random
@@ -325,7 +384,7 @@ impl SyncManager {
         // resolution existed (or before it was applied to that row): a target
         // that doesn't look like this platform's own naming convention and
         // was never tagged gets a chance to resolve against apps installed
-        // right now. Best-effort — sync must start regardless.
+        // right now. Best-effort ? sync must start regardless.
         if let Err(err) = self.reconcile_stale_context_targets() {
             log::warn!("sync: stale context target reconciliation failed: {err:#}");
         }
@@ -352,6 +411,11 @@ impl SyncManager {
         }
         let daemon =
             ServiceDaemon::new().map_err(|e| anyhow!("mDNS daemon failed to start: {e}"))?;
+        daemon
+            .disable_interface(IfKind::Predicate(IfPredicate::new(|interface| {
+                !is_discovery_interface_allowed(&interface.name, interface.ip(), interface.is_p2p())
+            })))
+            .map_err(|e| anyhow!("mDNS interface filtering failed: {e}"))?;
         let (uuid, name, port) = {
             let guard = self.inner.identity.read().expect("identity lock");
             let identity = guard.as_ref().ok_or_else(|| anyhow!("identity missing"))?;
@@ -380,20 +444,24 @@ impl SyncManager {
         let mut lan_addresses: Vec<std::net::IpAddr> = if_addrs::get_if_addrs()
             .unwrap_or_default()
             .into_iter()
-            .map(|interface| interface.ip())
-            .filter(|address| {
-                address.is_ipv4() && !address.is_loopback() && !address.is_unspecified()
+            .filter_map(|interface| {
+                let address = interface.ip();
+                (is_discovery_interface_allowed(&interface.name, address, interface.is_p2p())
+                    && is_discovery_advertised_address_allowed(address))
+                .then_some(address)
             })
             .collect();
         // Some directly launched macOS app binaries see only loopback through
         // getifaddrs. A UDP route lookup does not send traffic and reliably
         // reveals the primary interface address in that environment.
-        if let Ok(route_probe) = std::net::UdpSocket::bind("0.0.0.0:0") {
-            if route_probe.connect("192.0.2.1:9").is_ok() {
-                if let Ok(local) = route_probe.local_addr() {
-                    let address = local.ip();
-                    if address.is_ipv4() && !address.is_loopback() && !address.is_unspecified() {
-                        lan_addresses.push(address);
+        if lan_addresses.is_empty() {
+            if let Ok(route_probe) = std::net::UdpSocket::bind("0.0.0.0:0") {
+                if route_probe.connect("192.0.2.1:9").is_ok() {
+                    if let Ok(local) = route_probe.local_addr() {
+                        let address = local.ip();
+                        if is_discovery_advertised_address_allowed(address) {
+                            lan_addresses.push(address);
+                        }
                     }
                 }
             }
@@ -522,7 +590,7 @@ impl SyncManager {
                 Ok(_) => {}
                 // The resolved executable already belongs to another row for
                 // this context (both devices' targets turned out to be the
-                // same app) — drop the now-redundant stale row instead of
+                // same app) ? drop the now-redundant stale row instead of
                 // erroring the whole pass.
                 Err(rusqlite::Error::SqliteFailure(err, _))
                     if err.code == rusqlite::ErrorCode::ConstraintViolation =>
