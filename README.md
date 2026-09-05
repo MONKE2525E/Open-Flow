@@ -152,7 +152,8 @@ The normal flow is:
 1. Create a short-lived feature or fix branch from `master`.
 2. Open a pull request directly into `master`.
 3. Let the required CI checks run, review the change, and merge it into `master`.
-4. The morning nightly workflow and manual installer workflow use `master`.
+4. The morning nightly workflow reads `master`; run the manual installer
+   workflow from `master` when a production build is needed.
 
 If you are contributing, read [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) before you start.
 
