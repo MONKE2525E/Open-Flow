@@ -103,7 +103,7 @@ export interface InsightsPayload {
    state keyed off `totals.total_transcriptions == 0`.
 8. **Privacy.** This runs entirely locally. Do not log dictated text, top words, or any
    `clean_text` content — counts, ids, and model names only (see the logging rules in
-   `CLAUDE.md`).
+   `AGENTS.md`).
 
 ## Schema — what already exists
 
