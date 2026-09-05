@@ -264,7 +264,7 @@ fn release_matches_channel(release: &GhRelease, channel: UpdateChannel) -> bool 
         // those historical publication styles so the beta toggle does not
         // silently miss them.
         UpdateChannel::Beta => {
-            (release.prerelease || beta_tag)
+            (release.prerelease || beta_tag || beta_name)
                 && (target_is_branch || target_is_sha || legacy_beta_branch)
         }
         UpdateChannel::Stable => {
@@ -739,6 +739,18 @@ mod tests {
             release_with_name("Verenu-0.15.0-beta", "Verenu 0.15.0 beta", "master", false);
 
         assert!(select_release(&[release], UpdateChannel::Stable).is_none());
+    }
+
+    #[test]
+    fn explicitly_named_beta_releases_are_selected_for_beta_channel() {
+        let release = release_with_name("Verenu-0.15.0", "Verenu 0.15.0 beta", "master", false);
+
+        assert_eq!(
+            select_release(&[release], UpdateChannel::Beta)
+                .expect("beta release")
+                .tag_name,
+            "Verenu-0.15.0"
+        );
     }
 
     #[test]
