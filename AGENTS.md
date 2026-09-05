@@ -73,8 +73,8 @@ npm run test:smoke
 - Update application versions together in `package.json`,
   `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`.
 - Release installers belong under `installers/<version>/` with matching
-  checksums; the scheduled nightly release and manual installer workflow use
-  `master`.
+  checksums; the scheduled nightly release reads `master`. Run the manual
+  installer workflow from `master` for a production build.
 - The Windows low-level hotkey callback must return quickly, with pipeline work
   spawned outside the hook. Never hide the pill window; hidden WebView state
   events can be lost.

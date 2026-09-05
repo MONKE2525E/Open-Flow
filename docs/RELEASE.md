@@ -8,7 +8,8 @@ This document is the practical release checklist for Verenu. For release note wo
 2. Keep `master` green with the required CI checks.
 3. The scheduled morning nightly release inspects `master` and publishes the
    next prerelease when enough changes have accumulated.
-4. Use the manual installer workflow when an on-demand build is needed.
+4. Run the manual installer workflow from `master` when an on-demand
+   production build is needed; it builds the ref selected at dispatch.
 
 ## Version Bump
 
@@ -36,7 +37,7 @@ For UI-affecting work, also run the relevant Playwright smoke or integration tes
 
 ## Build Installers
 
-The manual GitHub Actions workflow [`../.github/workflows/build-installers.yml`](../.github/workflows/build-installers.yml) checks out `master` and builds:
+The manual GitHub Actions workflow [`../.github/workflows/build-installers.yml`](../.github/workflows/build-installers.yml) builds the ref selected at dispatch:
 
 - Windows NSIS installer
 - Windows MSI installer
