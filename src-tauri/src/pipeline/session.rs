@@ -1,5 +1,4 @@
 use super::*;
-use super::pill::{show_cancelled_pill, show_interrupted_pill};
 use chrono::{SecondsFormat, Utc};
 
 // ---------- recording session helpers ----------
@@ -130,9 +129,7 @@ pub fn start_recording_session_ex(
         None
     };
 
-    // Keep the state lock off the disk path: collect durable session ids under
-    // the lock, then open the live spool after dropping it.
-    let (durable_id, prepend_for_lifecycle) = {
+    let (durable_sink, prepend_for_lifecycle) = {
         let mut st = match lock_state(state) {
             Ok(st) => st,
             Err(e) => {
@@ -159,7 +156,7 @@ pub fn start_recording_session_ex(
                 );
             }
         };
-        let durable_id = if options.durable {
+        let sink = if options.durable {
             let id = if st.failover_reuse_id {
                 st.failover_reuse_id = false;
                 st.failover_session_id
@@ -175,25 +172,20 @@ pub fn start_recording_session_ex(
                     .map(|d| d.as_secs() as i64)
                     .unwrap_or(0);
             }
-            Some(id)
+            super::failover::open_live_writer(
+                id,
+                prepend_audio.as_ref().map(|a| a.samples_16k.as_slice()),
+                app,
+                state,
+            )
         } else {
             st.failover_session_id = None;
             st.failover_reuse_id = false;
             st.failover_started_at_unix = 0;
             None
         };
-        (durable_id, prepend_audio)
+        (sink, prepend_audio)
     };
-    let durable_sink = durable_id.and_then(|id| {
-        super::failover::open_live_writer(
-            id,
-            prepend_for_lifecycle
-                .as_ref()
-                .map(|a| a.samples_16k.as_slice()),
-            app,
-            state,
-        )
-    });
 
     match audio::RecordingSession::start(device, noise_reduction, mic_gain, durable_sink) {
         Ok(session) => {
@@ -221,9 +213,6 @@ pub fn start_recording_session_ex(
                     log::warn!(
                         "start_recording_session_ex: lifecycle was not Starting when installing Recording"
                     );
-                    st.failover_session_id = None;
-                    st.failover_reuse_id = false;
-                    st.failover_started_at_unix = 0;
                     drop(st);
                     let _ = session.stop();
                     if let Some(session_id) = exclusive_mic_session_id {
@@ -251,22 +240,16 @@ pub fn start_recording_session_ex(
                     .is_some_and(|audio| audio.duration_ms >= MIN_RECORDING_MS)
             {
                 super::failover::retire_committed();
-                let emit_cleared = if let Ok(mut st) = lock_state(state) {
+                if let Ok(mut st) = lock_state(state) {
                     let current_id = st.failover_session_id.clone();
-                    let stale = st.cancelled_capture.as_ref().is_some_and(|c| {
-                        current_id.as_ref().is_some_and(|id| &c.id != id)
-                    });
+                    let stale = st
+                        .cancelled_capture
+                        .as_ref()
+                        .is_some_and(|c| current_id.as_ref().is_some_and(|id| &c.id != id));
                     if stale {
                         st.cancelled_capture = None;
-                        true
-                    } else {
-                        false
+                        emit_cancelled_capture_cleared(app);
                     }
-                } else {
-                    false
-                };
-                if emit_cleared {
-                    emit_cancelled_capture_cleared(app);
                 }
             }
             if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
@@ -419,7 +402,7 @@ pub fn stash_cancelled_capture(
         SessionActive,
     }
     let outcome = match lock_state(state) {
-        Ok(mut st) => {
+        Ok(st) => {
             // Only stash while the system is genuinely idle. Between
             // `stop_and_capture_audio` (which released the Recording
             // lifecycle) and this call the user may have already started a
@@ -444,12 +427,6 @@ pub fn stash_cancelled_capture(
                     CaptureOrigin::UserCancelled => super::failover::FailoverKind::Cancelled,
                     CaptureOrigin::Interrupted => super::failover::FailoverKind::Recording,
                 };
-                // Reserve this capture's identity before releasing the lock.
-                // A new recording may start while commit_capture performs
-                // blocking disk I/O and must receive fresh failover metadata.
-                st.failover_session_id = None;
-                st.failover_reuse_id = false;
-                st.failover_started_at_unix = 0;
                 // Drop the state lock before disk I/O so hotkey/UI paths are
                 // not stalled on fsync.
                 drop(st);
@@ -482,9 +459,7 @@ pub fn stash_cancelled_capture(
     };
     match outcome {
         StashOutcome::Stashed(capture) => {
-            if start_stop_sounds_enabled(app)
-                && matches!(capture.origin, CaptureOrigin::UserCancelled)
-            {
+            if start_stop_sounds_enabled(app) {
                 crate::media::sound::play(crate::media::sound::SoundCue::Cancel);
             }
             emit_cancelled_capture(app, &capture);
@@ -510,9 +485,6 @@ pub fn stash_cancelled_capture(
 /// Releases a `Starting` reservation back to `Idle` when the mic failed to
 /// open — the carried prepend audio (if any) is simply dropped, not
 /// retained anywhere a later, unrelated dictation could inherit it.
-///
-/// Also clears in-memory failover fields so a failed durable start cannot
-/// leave a stale `failover_started_at_unix` that later sessions inherit.
 pub(crate) fn release_starting_reservation(state: &SharedState) {
     let mut st = match state.lock() {
         Ok(st) => st,
@@ -526,9 +498,6 @@ pub(crate) fn release_starting_reservation(state: &SharedState) {
     if matches!(st.lifecycle, DictationLifecycle::Starting { .. }) {
         st.lifecycle = DictationLifecycle::Idle;
     }
-    st.failover_session_id = None;
-    st.failover_reuse_id = false;
-    st.failover_started_at_unix = 0;
 }
 
 /// Spawns a Tokio task that emits `audio-level` events to the pill every 50ms

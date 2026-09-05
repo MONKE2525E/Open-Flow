@@ -189,10 +189,7 @@ static ICON_ART_CACHE: OnceLock<Mutex<Option<CachedIconArt>>> = OnceLock::new();
 fn cached_icon_art(theme: IconTheme, accent: [u8; 4], tray_size: u32) -> CachedIconArt {
     if let Ok(guard) = ICON_ART_CACHE.get_or_init(|| Mutex::new(None)).lock() {
         if let Some(cached) = guard.as_ref() {
-            if cached.theme == theme
-                && cached.accent == accent
-                && cached.tray_size == tray_size
-            {
+            if cached.theme == theme && cached.accent == accent && cached.tray_size == tray_size {
                 return cached.clone();
             }
         }
@@ -232,9 +229,7 @@ pub(crate) fn apply_runtime_icons(app: &AppHandle, theme_hint: Option<Theme>) {
     } = cached_icon_art(icon_theme, accent, tray_size);
 
     if let Some(w) = app.get_webview_window("main") {
-        if let Err(err) = w.set_icon(tauri::image::Image::new_owned(
-            window_rgba, 128, 128,
-        )) {
+        if let Err(err) = w.set_icon(tauri::image::Image::new_owned(window_rgba, 128, 128)) {
             log::warn!("Failed to update window icon: {err}");
         }
     }
@@ -256,9 +251,7 @@ pub(crate) fn apply_runtime_icons(app: &AppHandle, theme_hint: Option<Theme>) {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let result = tray.set_icon_with_as_template(
             Some(tauri::image::Image::new_owned(
-                tray_rgba,
-                tray_size,
-                tray_size,
+                tray_rgba, tray_size, tray_size,
             )),
             cfg!(target_os = "macos"),
         );
@@ -278,9 +271,7 @@ fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
         w.set_decorations(true).ok();
         w.set_background_color(Some(bg)).ok();
         w.set_title("").ok();
-        // Keep the webview under the native traffic-light controls so the
-        // title bar is part of the app surface instead of a separate strip.
-        w.set_title_bar_style(tauri::TitleBarStyle::Overlay)
+        w.set_title_bar_style(tauri::TitleBarStyle::Transparent)
             .ok();
     }
 }

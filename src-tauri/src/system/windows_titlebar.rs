@@ -279,7 +279,10 @@ mod tests {
                 titlebar_height: 40,
                 ..base
             },
-            NativeMetrics { left_inset: 0, ..base },
+            NativeMetrics {
+                left_inset: 0,
+                ..base
+            },
             NativeMetrics {
                 right_inset: 100,
                 ..base

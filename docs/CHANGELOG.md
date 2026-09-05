@@ -4,8 +4,6 @@ Notable project changes are recorded here. GitHub Release pages remain the sourc
 
 ## Unreleased
 
-- Dictations now survive a crash, force-quit, or reboot: in-progress audio is checkpointed locally and comes back as an Interrupted Continue offer (same Continue/Dismiss flow as a cancelled take). Always on, no settings toggle. The spool is deleted after the take is saved to history, dismissed, or 24 hours.
-
 - Replaced the Insights speaking-pace dial with a tick-scale meter that matches the rest of the page: the tile is now left-aligned on the same baseline grid as its two neighbours, quarter marks make the scale readable at a glance, the scale ceiling grows to always clear your personal best, and the best itself is marked on the scale instead of only being named underneath.
 - Fixed the main window stuttering and spiking CPU when dragged or resized quickly on Windows: moving the window no longer re-runs title-bar and icon updates per mouse event, resizes coalesce to a single refresh once the size settles, title-bar metrics are only forwarded when visible values change, and themed icons reuse cached artwork instead of re-rendering on every focus or settings event.
 - Restored the Windows tray icon's classic proportions — the accent-theming rework had grown the waveform to fill ~70% of the tile edge to edge; it sits back inside the tile with real margins, keeping the sharper native-size rendering.
@@ -19,7 +17,6 @@ Notable project changes are recorded here. GitHub Release pages remain the sourc
 - The model picker now lists every model a provider reports, not just the curated ones, behind a **Show N more models** toggle at the foot of the list — so a newly released model is selectable the day it ships without waiting for a Verenu update. Non-text models (image, TTS, embedding, and similar) are filtered out.
 - Fixed the model picker's search icon sitting below the centre of the search field.
 - Fixed the settings sidebar highlight blinking off the item under the cursor while the selection pill travelled to it.
-- Added **LAN device sync** (Settings -> Sync): pair two or more Verenu devices on the same network with a code-confirmed pairing flow, and keep snippets, dictionary, context groups, synced settings, dictation history, and lifetime stats merged across them automatically. Fully local and encrypted - no account, no cloud; API keys and microphone settings never sync. Either device can revoke the pairing at any time. See docs/lan-sync.md.
 - Added a **Legacy pages** toggle (Settings → General) that hides the standalone App Mappings, Dictionary, and Snippets pages by default in favor of Contexts, and brings them back — along with a heads-up that they're no longer actively maintained — when turned on.
 - Contexts is now hidden from the primary nav while Legacy pages is on, so there's only one place to manage app tones, vocabulary, and snippets at a time.
 - Fixed the App Mappings list playing an entrance animation for every existing row on first load; rows now only animate on actual reorder, matching the Dictionary list.
@@ -29,6 +26,10 @@ Notable project changes are recorded here. GitHub Release pages remain the sourc
 - Added a subtle pop-in animation when adding an app or website to a context group, without replaying it for the rest of the list when switching between context groups.
 - Added `docs/CONTEXTS.md` and marked App Mappings, Dictionary, and Snippets as legacy pages across the docs.
 - Fixed the Insights page stacking its summary tiles too early on narrow windows, stranding the gauge in a half-empty row — the hero band, heatmap rail, and vocabulary sections now adapt to the available column width and stay side by side down to the minimum window size.
+
+## 0.18.0
+
+The 0.18.0 release notes, installer assets, hashes, and platform-specific download details are available on the [GitHub release page](https://github.com/MONKE2525E/Verenu/releases/tag/v0.18.0).
 
 ## 0.15.1 beta - Audio & Polish
 

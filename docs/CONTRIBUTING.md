@@ -45,7 +45,7 @@ but config target origin/master --push-remote origin
 
 ## Before You Start
 
-- Read [`../CLAUDE.md`](../CLAUDE.md) for repo architecture, platform gotchas, and testing notes.
+- Read [`../AGENTS.md`](../AGENTS.md) for repo architecture, platform gotchas, and testing notes.
 - Read [ARCHITECTURE.md](ARCHITECTURE.md) for the public architecture map.
 - Read [TESTING.md](TESTING.md) for the full test matrix.
 - Check [ROADMAP.md](ROADMAP.md) for current bugs and long-term context.

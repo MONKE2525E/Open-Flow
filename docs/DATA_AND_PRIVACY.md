@@ -28,7 +28,7 @@ Stored locally in app storage and SQLite:
 - Transcription history
 - Auto-learn events and candidate data
 - Update-dismiss state
-- A short-lived dictation failover spool (dictation-failover/ under the app data directory): in-progress audio so a crash or reboot can offer Continue. Deleted after history is saved, on dismiss, or after 24 hours. Not included in backups or LAN sync.
+- A short-lived dictation failover spool (`dictation-failover/` under the app data directory): in-progress audio so a crash or reboot can offer Continue. Deleted after history is saved, on dismiss, or after 24 hours. Not included in backups.
 
 ### Logs
 

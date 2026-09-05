@@ -111,7 +111,7 @@ fn main() {
                 "release"
             };
             log::info!(
-                "verenu {} starting ? {} {}, {} build ? verbose logging {}",
+                "verenu {} starting — {} {}, {} build — verbose logging {}",
                 env!("CARGO_PKG_VERSION"),
                 std::env::consts::OS,
                 std::env::consts::ARCH,
@@ -137,7 +137,7 @@ fn main() {
                                 // On macOS the hotkey is now a modifier+key combo
                                 // (RegisterEventHotKey, no Input Monitoring). A stored
                                 // modifier-only chord from an earlier build (e.g. Fn+Control)
-                                // is not registrable ? migrate it to the ?+Space default so
+                                // is not registrable — migrate it to the ⌥+Space default so
                                 // the backend and the settings label stay in sync.
                                 #[cfg(target_os = "macos")]
                                 let (k1, k2) = if !crate::core::hotkey::is_hotkey_available(k1, k2)
@@ -225,7 +225,7 @@ fn main() {
             }
 
             // LAN device sync: identity, mDNS discovery, listener, sessions.
-            // Soft-fails internally ? never blocks startup.
+            // Soft-fails internally — never blocks startup.
             let sync_enabled = settings
                 .get(crate::data::store::SYNC_ENABLED)
                 .and_then(|value| value.as_bool())
@@ -254,7 +254,7 @@ fn main() {
             }
             app_hotkey::setup_hotkey(app, shared.clone());
             // setup_tray() already applies runtime icons (both platforms) via
-            // apply_runtime_icons() ? no need to call it again here.
+            // apply_runtime_icons() — no need to call it again here.
             #[cfg(target_os = "macos")]
             {
                 crate::system::mac_app::set_accessory_activation_policy_on_main_thread(
@@ -311,7 +311,7 @@ fn main() {
 
                     // Proactive safety unload: don't wait out the configured
                     // idle timeout if the system is genuinely low on RAM or
-                    // (NVIDIA) VRAM right now ? e.g. launching a demanding
+                    // (NVIDIA) VRAM right now — e.g. launching a demanding
                     // game shouldn't have to wait 15 minutes for Verenu to
                     // give back memory its local models are holding.
                     let stt_loaded = local_stt_manager
@@ -326,7 +326,7 @@ fn main() {
                         .unwrap_or(false);
                     if stt_loaded || llm_loaded {
                         // detect_resource_pressure() does blocking process
-                        // I/O (bounded by its own internal timeout) ? run it
+                        // I/O (bounded by its own internal timeout) — run it
                         // off the async worker thread so a slow/wedged
                         // nvidia-smi can never stall this loop or other
                         // tasks sharing the runtime.
@@ -400,7 +400,7 @@ fn main() {
                             == "system"
                         {
                             // apply_runtime_icons() already applies runtime icons
-                            // internally ? no separate call needed here.
+                            // internally — no separate call needed here.
                             apply_runtime_icons(app, Some(*theme));
                         }
                     }
@@ -413,7 +413,7 @@ fn main() {
                         // (theme/accent/DPI-dependent). Refreshing either here
                         // re-ran WinRT title-bar updates, child-window
                         // enumeration, full icon rasterization, and a frontend
-                        // style recalc on every mouse-move event of a drag ?
+                        // style recalc on every mouse-move event of a drag —
                         // the stutter when jiggling the window. A
                         // cross-monitor move that changes DPI arrives
                         // separately as ScaleFactorChanged below.
@@ -425,7 +425,7 @@ fn main() {
                         // (WinRT calls plus child-window enumeration) stalls
                         // the drag. Coalesce to a single refresh once the size
                         // settles so maximize/snap changes are still picked
-                        // up. Icons are size-independent ? they refresh on
+                        // up. Icons are size-independent — they refresh on
                         // ScaleFactorChanged/ThemeChanged/settings instead.
                         schedule_settled_titlebar_refresh(window.app_handle());
                     }
@@ -589,7 +589,7 @@ fn main() {
             }
             // Local cleanup runs llama-server.exe as a real child OS process
             // (unlike local_stt, which is in-process). Child processes are
-            // not automatically killed when their parent exits on Windows ?
+            // not automatically killed when their parent exits on Windows —
             // without this, quitting Verenu while a local cleanup model is
             // loaded would orphan llama-server.exe, leaving it running
             // indefinitely and holding the loaded model's RAM/VRAM.
@@ -605,12 +605,11 @@ fn main() {
 }
 
 #[cfg(target_os = "windows")]
-static TITLEBAR_REFRESH_GEN: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+static TITLEBAR_REFRESH_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Re-read native title-bar metrics once the window size has settled (150ms
 /// with no further `Resized` event). A live resize delivers one event per
-/// frame, so each event just bumps the generation and schedules a check ?
+/// frame, so each event just bumps the generation and schedules a check —
 /// only the last one in a burst performs the refresh. See the `Resized` arm
 /// in `on_window_event`.
 #[cfg(target_os = "windows")]

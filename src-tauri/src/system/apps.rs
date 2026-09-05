@@ -23,23 +23,6 @@ pub struct AppMapping {
     pub cleanup_intensity: Option<String>,
 }
 
-/// The standard directories scanned for `.app` bundles. Shared by
-/// `list_installed_apps` and the icon lookup in `system::icons` so an app that
-/// shows up in the picker resolves to the same bundle when its icon is fetched.
-#[cfg(target_os = "macos")]
-pub fn app_search_dirs() -> Vec<std::path::PathBuf> {
-    let mut dirs = vec![
-        std::path::PathBuf::from("/Applications"),
-        std::path::PathBuf::from("/Applications/Utilities"),
-        std::path::PathBuf::from("/System/Applications"),
-        std::path::PathBuf::from("/System/Applications/Utilities"),
-    ];
-    if let Ok(home) = std::env::var("HOME") {
-        dirs.push(std::path::PathBuf::from(home).join("Applications"));
-    }
-    dirs
-}
-
 /// Combines registry-discovered and currently-running apps into a single deduplicated list.
 pub fn list_installed_apps() -> Vec<InstalledApp> {
     #[cfg(not(any(windows, target_os = "macos")))]
@@ -53,8 +36,18 @@ pub fn list_installed_apps() -> Vec<InstalledApp> {
     {
         use std::collections::HashSet;
 
+        let mut dirs = vec![
+            std::path::PathBuf::from("/Applications"),
+            std::path::PathBuf::from("/Applications/Utilities"),
+            std::path::PathBuf::from("/System/Applications"),
+            std::path::PathBuf::from("/System/Applications/Utilities"),
+        ];
+        if let Ok(home) = std::env::var("HOME") {
+            dirs.push(std::path::PathBuf::from(home).join("Applications"));
+        }
+
         let mut apps: Vec<InstalledApp> = Vec::new();
-        for dir in app_search_dirs() {
+        for dir in dirs {
             let Ok(entries) = std::fs::read_dir(&dir) else {
                 continue;
             };

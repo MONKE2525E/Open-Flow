@@ -384,7 +384,7 @@ impl SyncManager {
         // resolution existed (or before it was applied to that row): a target
         // that doesn't look like this platform's own naming convention and
         // was never tagged gets a chance to resolve against apps installed
-        // right now. Best-effort ? sync must start regardless.
+        // right now. Best-effort — sync must start regardless.
         if let Err(err) = self.reconcile_stale_context_targets() {
             log::warn!("sync: stale context target reconciliation failed: {err:#}");
         }
@@ -590,7 +590,7 @@ impl SyncManager {
                 Ok(_) => {}
                 // The resolved executable already belongs to another row for
                 // this context (both devices' targets turned out to be the
-                // same app) ? drop the now-redundant stale row instead of
+                // same app) — drop the now-redundant stale row instead of
                 // erroring the whole pass.
                 Err(rusqlite::Error::SqliteFailure(err, _))
                     if err.code == rusqlite::ErrorCode::ConstraintViolation =>
