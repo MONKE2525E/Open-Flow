@@ -4,6 +4,7 @@
 
 use anyhow::Result;
 use serde_json::json;
+use std::net::IpAddr;
 
 use super::engine::{self, SyncHost, SYNCABLE_SETTINGS};
 use super::protocol::Message;
@@ -44,6 +45,35 @@ fn automatic_sync_has_exactly_one_initiator() {
     let b = "be256d68-0000-0000-0000-000000000000";
     assert!(super::manager::should_auto_initiate(a, b));
     assert!(!super::manager::should_auto_initiate(b, a));
+}
+
+#[test]
+fn discovery_excludes_tunnels_virtual_and_non_lan_interfaces() {
+    assert!(!super::manager::is_discovery_interface_allowed(
+        "Tailscale",
+        "100.99.57.54".parse::<IpAddr>().unwrap(),
+        true,
+    ));
+    assert!(!super::manager::is_discovery_interface_allowed(
+        "Ethernet",
+        "100.99.57.54".parse::<IpAddr>().unwrap(),
+        false,
+    ));
+    assert!(!super::manager::is_discovery_interface_allowed(
+        "vEthernet (Default Switch)",
+        "172.20.0.1".parse::<IpAddr>().unwrap(),
+        false,
+    ));
+    assert!(!super::manager::is_discovery_interface_allowed(
+        "Ethernet",
+        "169.254.61.34".parse::<IpAddr>().unwrap(),
+        false,
+    ));
+    assert!(super::manager::is_discovery_interface_allowed(
+        "Ethernet 2",
+        "192.168.0.187".parse::<IpAddr>().unwrap(),
+        false,
+    ));
 }
 
 fn test_db(device_uuid: &str) -> DbHandle {
@@ -830,7 +860,7 @@ fn test_context_op(
 /// A target this device already resolved for its own platform (whether by a
 /// prior successful auto-match or the user manually picking the app on an
 /// unresolved "?::" chip) must survive a later resync that re-derives a
-/// worse or unresolved match for the same context — see the "sticky" guard
+/// worse or unresolved match for the same context ? see the "sticky" guard
 /// in `reconcile_context_children`.
 #[test]
 fn resolved_context_target_survives_a_later_unresolved_resync() {
@@ -864,7 +894,7 @@ fn resolved_context_target_survives_a_later_unresolved_resync() {
     .expect("simulate local fix");
 
     // A later resync re-derives a bad/unresolved match again for the same
-    // context — e.g. an unrelated edit made on another device (rename, tone
+    // context ? e.g. an unrelated edit made on another device (rename, tone
     // change) after the fix, which still carries that device's now-stale
     // view of the target list, since a context syncs as one LWW aggregate.
     // Use a real "now" stamp so this op is unambiguously newer than the
@@ -888,7 +918,7 @@ fn resolved_context_target_survives_a_later_unresolved_resync() {
     // The sticky row must survive completely unchanged. (A stray unresolved
     // marker may additionally appear alongside it here, since this test's
     // synthetic resync payload deliberately carries a different raw source
-    // string than what actually produced "antigravity.app" — in the real
+    // string than what actually produced "antigravity.app" ? in the real
     // pipeline, `resolve_context_targets_in_ops` re-derives the same source
     // deterministically and would just re-affirm the sticky row instead. The
     // one guarantee this test enforces is what the user asked for: the fix
