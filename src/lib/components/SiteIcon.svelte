@@ -29,14 +29,7 @@
   function loadSiteIcon(domain: string): Promise<string | null> {
     const host = normalizeHost(domain);
     if (!host) return Promise.resolve(null);
-    let pending = siteIconCache.get(host);
-    if (!pending) {
-      // A rejected/failed lookup stays cached as `null` — no retry storm on a
-      // site that simply has no reachable icon.
-      pending = invoke<string | null>('get_site_icon', { domain: host }).catch(() => null);
-      siteIconCache.set(host, pending);
-    }
-    return pending;
+    return siteIconCache.get(host, () => invoke<string | null>('get_site_icon', { domain: host }));
   }
 </script>
 
