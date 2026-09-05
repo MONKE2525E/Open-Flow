@@ -32,13 +32,15 @@ fn dictionary_protects_initial_case(text: &str, entries: &[db::DictionaryEntry])
     entries.iter().any(|entry| {
         !entry.term.is_empty()
             && entry.term.chars().any(char::is_uppercase)
-            && [leading, alphanumeric_leading].into_iter().any(|candidate| {
-                candidate.strip_prefix(&entry.term).is_some_and(|rest| {
-                    rest.chars()
-                    .next()
-                    .is_none_or(|ch| !ch.is_alphanumeric() && !matches!(ch, '\'' | '’'))
+            && [leading, alphanumeric_leading]
+                .into_iter()
+                .any(|candidate| {
+                    candidate.strip_prefix(&entry.term).is_some_and(|rest| {
+                        rest.chars()
+                            .next()
+                            .is_none_or(|ch| !ch.is_alphanumeric() && !matches!(ch, '\'' | '’'))
+                    })
                 })
-            })
     })
 }
 
@@ -182,7 +184,15 @@ pub(super) async fn finalize_pipeline_completion(
     })
     .await
     {
-        Ok(Ok(entry)) => entry,
+        Ok(Ok(entry)) => {
+            super::failover::discard_durable();
+            if let Ok(mut st) = lock_state(state) {
+                st.failover_session_id = None;
+                st.failover_reuse_id = false;
+                st.failover_started_at_unix = 0;
+            }
+            entry
+        }
         Ok(Err(e)) => {
             show_error_pill(
                 app,

@@ -375,9 +375,9 @@
     font-size: 11px;
     font-weight: 500;
     color: var(--ink-mute);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-family: var(--mono);
+    text-transform: none;
+    letter-spacing: 0;
+    font-family: var(--sans);
     margin-bottom: 10px;
   }
 

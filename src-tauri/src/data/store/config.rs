@@ -77,8 +77,7 @@ pub fn migrate_deprecated_model_id(id: &str) -> String {
         )
     {
         format!("{GROQ}/{GROQ_QWEN_3_6_27B_MODEL}")
-    } else if provider == GOOGLE
-        && matches!(model.as_str(), "gemini-3.7-flash" | "gemini-2.5-pro")
+    } else if provider == GOOGLE && matches!(model.as_str(), "gemini-3.7-flash" | "gemini-2.5-pro")
     {
         format!("{GOOGLE}/gemini-3.5-flash-lite")
     } else {

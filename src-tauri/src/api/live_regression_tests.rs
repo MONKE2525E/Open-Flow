@@ -489,10 +489,8 @@ async fn run_gemini_eval(model: &str, cases: &[LiveCase], api_key: &str) -> Mode
             None,
             case.alternate.as_deref(),
         );
-        let transcript_input = cleanup::format_transcript_input(
-            &case.input,
-            case.alternate.as_deref(),
-        );
+        let transcript_input =
+            cleanup::format_transcript_input(&case.input, case.alternate.as_deref());
         let rendered_prompt_tokens = estimate_tokens(prompt.chars().count());
         let input_tokens = estimate_tokens(
             prompt
@@ -561,7 +559,8 @@ async fn run_gemini_eval(model: &str, cases: &[LiveCase], api_key: &str) -> Mode
                 );
             }
             Err(error) => {
-                report.failures
+                report
+                    .failures
                     .push(format!("{} request failed: {error}", case.id));
                 println!(
                     "VERENU_GEMINI_EVAL_CASE: model={} id={} request_error latency_ms={}",
@@ -622,8 +621,7 @@ async fn live_gemini_cleanup_comparison() {
         target_model, stronger_eligible_model, previous_stronger_model
     );
 
-    let selected_cases: Vec<LiveCase> = if let Some(filter) = std::env::var_os("VERENU_LIVE_CASE")
-    {
+    let selected_cases: Vec<LiveCase> = if let Some(filter) = std::env::var_os("VERENU_LIVE_CASE") {
         let filter = filter.to_string_lossy();
         fixtures
             .live_cases
@@ -638,8 +636,7 @@ async fn live_gemini_cleanup_comparison() {
         return;
     }
     let target = run_gemini_eval(target_model, &selected_cases, &api_key).await;
-    let stronger =
-        run_gemini_eval(stronger_eligible_model, &selected_cases, &api_key).await;
+    let stronger = run_gemini_eval(stronger_eligible_model, &selected_cases, &api_key).await;
     let target_passed = target.successful_requests == target.cases && target.failures.is_empty();
     println!(
         "VERENU_TEST_RESULT={}",

@@ -367,6 +367,7 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                             &app_hk,
                             &state_hk,
                             active.captured_audio,
+                            pipeline::CaptureOrigin::UserCancelled,
                         );
                         continue;
                     }
@@ -393,6 +394,7 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                         // offer, Escape dismisses it (same as clicking the
                         // pill's own dismiss button).
                         if pipeline::take_cancelled_capture_if_fresh(&state_hk).is_some() {
+                            pipeline::failover::discard_durable();
                             pipeline::emit_cancelled_capture_cleared(&app_hk);
                         }
                         hide_pill(&app_hk);

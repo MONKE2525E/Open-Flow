@@ -153,7 +153,9 @@ fn models_list_request(
         store::GROQ => client
             .get("https://api.groq.com/openai/v1/models")
             .bearer_auth(key),
-        store::OPENAI => client.get("https://api.openai.com/v1/models").bearer_auth(key),
+        store::OPENAI => client
+            .get("https://api.openai.com/v1/models")
+            .bearer_auth(key),
         store::GOOGLE => {
             let mut request = client
                 .get("https://generativelanguage.googleapis.com/v1beta/models")
@@ -209,7 +211,12 @@ pub fn parse_google_models_page(body: &str) -> Result<(Vec<String>, Option<Strin
                 })
         })
         .filter_map(|entry| entry.get("name").and_then(|n| n.as_str()))
-        .map(|name| name.strip_prefix("models/").unwrap_or(name).trim().to_string())
+        .map(|name| {
+            name.strip_prefix("models/")
+                .unwrap_or(name)
+                .trim()
+                .to_string()
+        })
         .filter(|id| !id.is_empty())
         .collect();
 
@@ -327,7 +334,10 @@ mod model_list_tests {
         let (ids, next) = parse_google_models_page(body).unwrap();
         assert_eq!(
             ids,
-            vec!["gemini-3.7-flash".to_string(), "unknown-methods".to_string()]
+            vec![
+                "gemini-3.7-flash".to_string(),
+                "unknown-methods".to_string()
+            ]
         );
         assert!(next.is_none());
     }

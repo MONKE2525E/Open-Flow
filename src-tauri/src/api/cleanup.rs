@@ -753,12 +753,7 @@ mod tests {
     #[test]
     fn openai_gpt_51_uses_its_no_reasoning_mode() {
         let body = build_openai_compat_request_with_alternate(
-            "hello",
-            "gpt-5.1",
-            "prompt",
-            128,
-            None,
-            "OpenAI",
+            "hello", "gpt-5.1", "prompt", 128, None, "OpenAI",
         );
         let json = serde_json::to_value(body).unwrap();
         assert_eq!(json["reasoning_effort"], "none");
@@ -776,12 +771,7 @@ mod tests {
 
     #[test]
     fn google_cleanup_request_includes_gemini_config() {
-        let body = build_google_cleanup_request(
-            "hello",
-            "prompt",
-            "gemini-2.5-flash-lite",
-            256,
-        );
+        let body = build_google_cleanup_request("hello", "prompt", "gemini-2.5-flash-lite", 256);
         let json = serde_json::to_value(&body).unwrap();
         assert_eq!(
             json["generationConfig"]["thinkingConfig"]["thinkingBudget"],

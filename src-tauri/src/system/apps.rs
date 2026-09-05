@@ -464,10 +464,18 @@ pub fn list_installed_apps_cached() -> Vec<InstalledApp> {
     }
 
     static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(Cache { at: None, apps: Vec::new() }));
+    let cache = CACHE.get_or_init(|| {
+        Mutex::new(Cache {
+            at: None,
+            apps: Vec::new(),
+        })
+    });
     {
         let guard = cache.lock().expect("installed-app cache lock");
-        if guard.at.is_some_and(|at| at.elapsed() < Duration::from_secs(15)) {
+        if guard
+            .at
+            .is_some_and(|at| at.elapsed() < Duration::from_secs(15))
+        {
             return guard.apps.clone();
         }
     }
@@ -477,7 +485,10 @@ pub fn list_installed_apps_cached() -> Vec<InstalledApp> {
     // the potentially slow inventory operation.
     let apps = list_installed_apps();
     let mut guard = cache.lock().expect("installed-app cache lock");
-    if guard.at.is_none_or(|at| at.elapsed() >= Duration::from_secs(15)) {
+    if guard
+        .at
+        .is_none_or(|at| at.elapsed() >= Duration::from_secs(15))
+    {
         guard.apps = apps;
         guard.at = Some(Instant::now());
     }
@@ -520,38 +531,57 @@ pub fn closest_installed_app<'a>(
                 .collect::<Vec<_>>();
             let score = source_keys
                 .iter()
-                .flat_map(|source| candidate_keys.iter().map(move |candidate| app_match_score(source, candidate)))
+                .flat_map(|source| {
+                    candidate_keys
+                        .iter()
+                        .map(move |candidate| app_match_score(source, candidate))
+                })
                 .fold(0.0_f32, f32::max);
-            let same_developer = source_developer.is_some() && source_developer == candidate_developer;
+            let same_developer =
+                source_developer.is_some() && source_developer == candidate_developer;
             let threshold = if same_developer { 0.72 } else { 0.78 };
             // Legacy targets do not have metadata yet. A lower threshold is
             // still safe when the candidate preserves a meaningful prefix;
             // without either developer agreement or that prefix, a similar
             // score is not enough to auto-rebind a user assignment.
             let strong_prefix = source_keys.iter().any(|source| {
-                candidate_keys.iter().any(|candidate| common_prefix_len(source, candidate) >= 4)
+                candidate_keys
+                    .iter()
+                    .any(|candidate| common_prefix_len(source, candidate) >= 4)
             });
             let ranking_score = score + if same_developer { 0.05 } else { 0.0 };
-            (score >= threshold && (same_developer || strong_prefix))
-                .then_some((app, score, same_developer, ranking_score))
+            (score >= threshold && (same_developer || strong_prefix)).then_some((
+                app,
+                score,
+                same_developer,
+                ranking_score,
+            ))
         })
-        .max_by(|(_, left_score, left_same, left_rank), (_, right_score, right_same, right_rank)| {
-            // A fixed developer bonus prefers same-developer matches within
-            // the intended margin while keeping the ordering transitive.
-            left_rank
-                .total_cmp(right_rank)
-                .then_with(|| left_score.total_cmp(right_score))
-                .then_with(|| left_same.cmp(right_same))
-        })
+        .max_by(
+            |(_, left_score, left_same, left_rank), (_, right_score, right_same, right_rank)| {
+                // A fixed developer bonus prefers same-developer matches within
+                // the intended margin while keeping the ordering transitive.
+                left_rank
+                    .total_cmp(right_rank)
+                    .then_with(|| left_score.total_cmp(right_score))
+                    .then_with(|| left_same.cmp(right_same))
+            },
+        )
         .map(|(app, _, _, _)| app)
 }
 
 fn normalized_metadata(value: Option<&str>) -> Option<String> {
-    value.map(str::trim).filter(|value| !value.is_empty()).map(str::to_lowercase)
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_lowercase)
 }
 
 fn developer_metadata_is_comparable(left: &Option<String>, right: &Option<String>) -> bool {
-    match (developer_metadata_kind(left.as_deref()), developer_metadata_kind(right.as_deref())) {
+    match (
+        developer_metadata_kind(left.as_deref()),
+        developer_metadata_kind(right.as_deref()),
+    ) {
         (Some(left_kind), Some(right_kind)) => left_kind == right_kind,
         (None, None) => true,
         // A bundle identifier and a registry publisher are platform-specific
@@ -566,12 +596,20 @@ fn developer_metadata_kind(value: Option<&str>) -> Option<&'static str> {
         value
             .strip_prefix("mac-bundle:")
             .map(|_| "mac-bundle")
-            .or_else(|| value.strip_prefix("windows-publisher:").map(|_| "windows-publisher"))
+            .or_else(|| {
+                value
+                    .strip_prefix("windows-publisher:")
+                    .map(|_| "windows-publisher")
+            })
     })
 }
 
 fn app_match_key(value: &str) -> String {
-    let basename = value.rsplit(['/', '\\']).next().unwrap_or(value).to_lowercase();
+    let basename = value
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(value)
+        .to_lowercase();
     let basename = basename
         .strip_suffix(".exe")
         .or_else(|| basename.strip_suffix(".app"))
@@ -580,8 +618,12 @@ fn app_match_key(value: &str) -> String {
 }
 
 fn app_match_score(left: &str, right: &str) -> f32 {
-    if left.is_empty() || right.is_empty() { return 0.0; }
-    if left == right { return 1.0; }
+    if left.is_empty() || right.is_empty() {
+        return 0.0;
+    }
+    if left == right {
+        return 1.0;
+    }
     if left.contains(right) || right.contains(left) {
         let left_len = left.chars().count();
         let right_len = right.chars().count();

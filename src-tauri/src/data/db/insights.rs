@@ -155,8 +155,12 @@ pub fn query_insights(db: &Db, days: i64, context_id: Option<i64>) -> Result<Ins
     let (streak_start, streak_end) = rolling_year_bounds(&conn)?;
     let streak_daily = query_daily(&conn, &streak_start, &streak_end, context_id)?;
     let (lifetime_streak_start, lifetime_streak_end) = range_bounds(&conn, 0, context_id)?;
-    let lifetime_streak_daily =
-        query_daily(&conn, &lifetime_streak_start, &lifetime_streak_end, context_id)?;
+    let lifetime_streak_daily = query_daily(
+        &conn,
+        &lifetime_streak_start,
+        &lifetime_streak_end,
+        context_id,
+    )?;
     // Scoped too, so the heatmap can still tell "before this context existed"
     // apart from "a day you didn't use it".
     let history_started_on = conn.query_row(
@@ -321,11 +325,7 @@ fn parse_api_usage(api_used: &str) -> ApiUsageParts {
 /// Local calendar-day bounds of the requested range, as `"YYYY-MM-DD"`.
 /// `days > 0` spans the last `days` calendar days ending today; `days == 0`
 /// spans the first recorded transcription through today.
-fn range_bounds(
-    conn: &Connection,
-    days: i64,
-    context_id: Option<i64>,
-) -> Result<(String, String)> {
+fn range_bounds(conn: &Connection, days: i64, context_id: Option<i64>) -> Result<(String, String)> {
     let today: String = conn.query_row("SELECT date('now', 'localtime')", [], |r| r.get(0))?;
     let start = if days > 0 {
         let n = (days - 1).max(0);
@@ -687,19 +687,17 @@ fn query_words(
         }
     }
 
+    let unique_words = counts.len() as i64;
     let mut top: Vec<InsightsWordCount> = counts
-        .iter()
-        .map(|(word, count)| InsightsWordCount {
-            word: word.clone(),
-            count: *count,
-        })
+        .into_iter()
+        .map(|(word, count)| InsightsWordCount { word, count })
         .collect();
     top.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.word.cmp(&b.word)));
     top.truncate(TOP_WORDS_LIMIT);
 
     Ok(InsightsWords {
         top,
-        unique_words: counts.len() as i64,
+        unique_words,
         longest_word: longest,
         avg_word_length: if length_count > 0 {
             length_sum as f64 / length_count as f64
@@ -887,7 +885,10 @@ mod tests {
         assert!(all.words.top.iter().any(|w| w.word == "golf"));
 
         // Lifetime counters have no context dimension and stay global.
-        assert_eq!(scoped.cleanup.dictionary_fixes, all.cleanup.dictionary_fixes);
+        assert_eq!(
+            scoped.cleanup.dictionary_fixes,
+            all.cleanup.dictionary_fixes
+        );
         assert_eq!(
             scoped.cleanup.auto_learned_terms,
             all.cleanup.auto_learned_terms

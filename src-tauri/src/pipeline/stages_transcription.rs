@@ -43,11 +43,13 @@ pub(super) async fn stop_and_capture_audio(
         Ok(Ok(v)) => v,
         Ok(Err(e)) => {
             log::error!("audio stop: {e}");
+            super::failover::abandon_live();
             hide_pill(app);
             return None;
         }
         Err(e) => {
             log::error!("audio stop task panicked: {e}");
+            super::failover::abandon_live();
             hide_pill(app);
             return None;
         }
@@ -67,6 +69,7 @@ pub(super) async fn stop_and_capture_audio(
             ),
         )
         .await;
+        super::failover::abandon_live();
         return None;
     }
     Some((

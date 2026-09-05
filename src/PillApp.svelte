@@ -3,7 +3,8 @@
   import { formatKeyLabel } from './lib/platform';
   import { BARS, createPillVisualizer } from './lib/pillVisualizer';
 
-  type PillState = 'idle' | 'recording' | 'repair_recording' | 'processing' | 'loading_local_model' | 'handsfree' | 'error' | 'cancelled' | 'paste_failed' | 'copied' | 'clipboard_warning' | 'feedback_prompt' | 'repair_input' | 'repair_processing' | 'repair_proposal' | 'repair_applying' | 'repair_done' | 'repair_error';
+  type PillState = 'idle' | 'recording' | 'repair_recording' | 'processing' | 'loading_local_model' | 'handsfree' | 'error' | 'cancelled' | 'interrupted' | 'paste_failed' | 'copied' | 'clipboard_warning' | 'feedback_prompt' | 'repair_input' | 'repair_processing' | 'repair_proposal' | 'repair_applying' | 'repair_done' | 'repair_error';
+  const isCancelLike = (s: PillState) => s === 'cancelled' || s === 'interrupted';
   type RepairProposal = { id: number; summary: string; scope: string };
   let state: PillState = 'idle';
   let errorMsg = '';
@@ -651,6 +652,7 @@
         } else if (
           incoming === 'error' ||
           incoming === 'cancelled' ||
+          incoming === 'interrupted' ||
           incoming === 'paste_failed' ||
           incoming === 'copied'
         ) {
@@ -718,6 +720,7 @@
         state = incoming;
         void setPillInteractive(
           incoming === 'cancelled' ||
+          incoming === 'interrupted' ||
           incoming === 'paste_failed' ||
           incoming === 'copied' ||
           incoming === 'repair_input' ||
@@ -785,16 +788,16 @@
           errScroll = false;
         }
 
-        if (state === 'cancelled') {
+        if (isCancelLike(state)) {
           cancelOpen = false;
           showCancelBtn = false;
           requestAnimationFrame(() => {
-            if (state === 'cancelled') cancelOpen = true;
+            if (isCancelLike(state)) cancelOpen = true;
           });
           if (cancelBtnTimer) clearTimeout(cancelBtnTimer);
           cancelBtnTimer = setTimeout(() => {
             cancelBtnTimer = null;
-            if (state === 'cancelled') showCancelBtn = true;
+            if (isCancelLike(state)) showCancelBtn = true;
           }, 200);
           if (cancelDismissTimer) clearTimeout(cancelDismissTimer);
           cancelDismissTimer = setTimeout(() => {
@@ -802,7 +805,7 @@
             // Just hide the toast — the capture itself stays resumable from
             // Home for the full backend window. Only the explicit dismiss
             // button actually discards it (see dismissCancelled()).
-            if (state === 'cancelled') goIdle();
+            if (isCancelLike(state)) goIdle();
           }, 10000);
         } else {
           if (cancelBtnTimer) {
@@ -909,7 +912,7 @@
       // *another* window (Home's banner) — if this toast is still showing,
       // it's now stale, so drop it without re-invoking dismiss.
       const l4 = await listen('verenu:cancelled-capture-cleared', () => {
-        if (state === 'cancelled') goIdle();
+        if (isCancelLike(state)) goIdle();
       });
       if (!mounted) { l4(); return; }
       unlisteners.push(l4);
@@ -1340,14 +1343,14 @@
       {/if}
     </div>
 
-  {:else if state === 'cancelled'}
-    <div class="pill cancelled" class:cancel-open={cancelOpen} class:dying={dying}>
+  {:else if isCancelLike(state)}
+    <div class="pill cancelled" class:interrupted={state === 'interrupted'} class:cancel-open={cancelOpen} class:dying={dying}>
       <button class="hf-btn cancel" onclick={dismissCancelled} aria-label="Dismiss">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
           <path d="M6 6l12 12M6 18 18 6"/>
         </svg>
       </button>
-      <span class="cancel-text">Cancelled</span>
+      <span class="cancel-text">{state === 'interrupted' ? 'Interrupted' : 'Cancelled'}</span>
       {#if showCancelBtn}
         <button class="hf-btn confirm" onclick={continueCancelled} aria-label="Undo — keep recording">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -2113,6 +2116,9 @@
   .pill.cancelled.cancel-open {
     width: 158px;
     padding: 0 8px;
+  }
+  .pill.cancelled.interrupted.cancel-open {
+    width: 172px;
   }
   .cancel-text {
     font-size: 11.5px; font-weight: 500;

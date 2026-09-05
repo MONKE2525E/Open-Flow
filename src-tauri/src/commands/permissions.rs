@@ -8,11 +8,11 @@
 //! **Microphone**. Keychain access is surfaced separately when a provider key is
 //! stored.
 
+#[cfg(target_os = "macos")]
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(target_os = "macos")]
 use std::sync::OnceLock;
-#[cfg(target_os = "macos")]
-use std::path::Path;
 static PERMISSION_QUERY_GENERATION: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_os = "macos")]
 static SIGNING_INFO: OnceLock<(Option<String>, Option<String>)> = OnceLock::new();
@@ -26,12 +26,18 @@ fn canonical_relaunch_bundle(bundle: String) -> String {
     }
     let path = Path::new(&bundle);
     let legacy = path.file_name().and_then(|name| name.to_str()) == Some("Verenu.app")
-        && path.parent().and_then(|parent| parent.file_name()).and_then(|name| name.to_str())
+        && path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str())
             == Some("macos-dev");
     if !legacy {
         return bundle;
     }
-    match path.parent().map(|parent| parent.join("Verenu Development.app")) {
+    match path
+        .parent()
+        .map(|parent| parent.join("Verenu Development.app"))
+    {
         Some(candidate) if candidate.is_dir() => candidate.to_string_lossy().into_owned(),
         _ => bundle,
     }
@@ -648,11 +654,12 @@ pub fn restart_app(handle: tauri::AppHandle) -> Result<(), String> {
         if let Some(bundle) = crate::system::mac_app::bundle_path()
             .map(canonical_relaunch_bundle)
             .filter(|path| {
-            Path::new(path.trim_end_matches('/'))
-                .extension()
-                .map(|extension| extension == "app")
-                .unwrap_or(false)
-        }) {
+                Path::new(path.trim_end_matches('/'))
+                    .extension()
+                    .map(|extension| extension == "app")
+                    .unwrap_or(false)
+            })
+        {
             let pid = std::process::id().to_string();
             std::process::Command::new("/bin/sh")
                 .args([

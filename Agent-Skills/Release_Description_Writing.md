@@ -66,7 +66,7 @@ Rules:
 - This section is evergreen. Update it as features land, not just at release time.
 - Categories used: Transcription, Text Cleanup, Dictionary & Snippets, History & Stats, Settings.
 - Bold-label bullets (`**Label** - description`) for major features. Use plain bullets for supporting details.
-- Use bold format for hotkeys (e.g., `**Ctrl+Win**` for Windows, `**fn+Control**` for macOS) with no backticks.
+- Use bold format for hotkeys (e.g., `**Ctrl+Win**` for Windows, `**Option+Space**` for macOS) with no backticks.
 - Keep descriptions present-tense and functional ("Start a continuous dictation session").
 
 ### 5. Getting Started
@@ -76,7 +76,7 @@ Rules:
 
 1. Download the installer from releases
 2. Add your API key for Groq, OpenAI, or Google
-3. Hold **Ctrl+Win** (Windows) or **fn+Control** (macOS) and start talking
+3. Hold **Ctrl+Win** (Windows) or **Option+Space** (macOS) and start talking
 4. Release the hotkey and your cleaned-up text appears in the active app
 ```
 
@@ -88,7 +88,7 @@ This is static.
 ## Shortcuts
 
 - **Windows hold-to-record** - Hold **Ctrl+Win** to record, release to transcribe and inject
-- **macOS hold-to-record** - Hold **fn+Control** to record, release to transcribe and inject
+- **macOS hold-to-record** - Hold **Option+Space** to record, release to transcribe and inject
 ```
 
 Rules:

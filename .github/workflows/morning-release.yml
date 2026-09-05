@@ -1,9 +1,9 @@
-name: Morning Dev Release
+name: Morning Nightly Release
 
 on:
   schedule:
-    # GitHub schedules run on the default branch. Keep this workflow on master,
-    # then explicitly inspect dev below. The timezone keeps 08:00 local time
+    # GitHub schedules run on the default branch. This workflow inspects master.
+    # The timezone keeps 08:00 local time
     # across daylight-saving changes.
     - cron: '0 8 * * *'
       timezone: America/Vancouver
@@ -14,12 +14,12 @@ permissions:
   models: read
 
 concurrency:
-  group: morning-dev-release
+  group: morning-nightly-release
   cancel-in-progress: false
 
 jobs:
   prepare:
-    name: Prepare changed dev snapshot
+    name: Prepare changed master snapshot
     runs-on: ubuntu-latest
     outputs:
       should_release: ${{ steps.changes.outputs.should_release }}
@@ -28,14 +28,14 @@ jobs:
       app_version: ${{ steps.changes.outputs.app_version }}
       release_sha: ${{ steps.tag.outputs.release_sha || steps.changes.outputs.release_sha }}
     steps:
-      - name: Check out dev history
+      - name: Check out master history
         uses: actions/checkout@v6
         with:
-          ref: dev
+          ref: master
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Find changes since the previous dev release
+      - name: Find changes since the previous nightly release
         id: changes
         shell: bash
         env:
@@ -43,15 +43,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          git fetch origin dev --tags --force
-          dev_sha="$(git rev-parse origin/dev)"
+          git fetch origin master --tags --force
+          master_sha="$(git rev-parse origin/master)"
           baseline_sha=""
           baseline_tag=""
           last_nightly=""
 
           # A nightly tag points at a release-only metadata commit whose
-          # parent is the dev snapshot it released. Find the newest such tag
-          # whose parent is still reachable from the current dev branch.
+          # parent is the master snapshot it released. Find the newest such tag
+          # whose parent is still reachable from the current master branch.
           last_nightly_date=""
           while IFS= read -r candidate; do
             if [[ ! "$candidate" =~ ^Verenu-[0-9]+\.[0-9]+\.[0-9]+-nightly\.([0-9]{8})$ ]]; then
@@ -60,7 +60,7 @@ jobs:
             candidate_date="${BASH_REMATCH[1]}"
             nightly_commit="$(git rev-parse "${candidate}^{commit}")"
             candidate_sha="$(git rev-parse "${nightly_commit}^")"
-            if git merge-base --is-ancestor "$candidate_sha" "$dev_sha" && [[ -z "$last_nightly" || "$candidate_date" > "$last_nightly_date" ]]; then
+            if git merge-base --is-ancestor "$candidate_sha" "$master_sha" && [[ -z "$last_nightly" || "$candidate_date" > "$last_nightly_date" ]]; then
               last_nightly="$candidate"
               last_nightly_date="$candidate_date"
               baseline_sha="$candidate_sha"
@@ -70,45 +70,45 @@ jobs:
 
           # Nightlies keep the latest stable release as their numeric version
           # base. The fallback is used only before the first reachable stable
-          # tag exists in the dev history.
+          # tag exists in the master history.
           nightly_base_version="$NIGHTLY_START_VERSION"
-          nightly_base_tag="$(git tag --merged "$dev_sha" --list 'Verenu-*' | grep -E '^Verenu-[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+          nightly_base_tag="$(git tag --merged "$master_sha" --list 'Verenu-*' | grep -E '^Verenu-[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
           if [[ -n "$nightly_base_tag" ]]; then
             nightly_base_version="${nightly_base_tag#Verenu-}"
           fi
 
           # Before the first nightly, use the newest release tag reachable
-          # from dev. Tags are branch-agnostic, so reachability is the branch
+          # from master. Tags are branch-agnostic, so reachability is the branch
           # association we can verify safely.
           if [[ -z "$baseline_sha" ]]; then
             baseline_tag="$nightly_base_tag"
             if [[ -z "$baseline_tag" ]]; then
-              baseline_tag="$(git tag --merged "$dev_sha" --list 'Verenu-*' | sort -V | tail -n 1 || true)"
+              baseline_tag="$(git tag --merged "$master_sha" --list 'Verenu-*' | sort -V | tail -n 1 || true)"
             fi
             if [[ -z "$baseline_tag" ]]; then
-              echo 'No release tag reachable from dev; refusing to guess a baseline.' >&2
+              echo 'No release tag reachable from master; refusing to guess a baseline.' >&2
               exit 1
             fi
             baseline_sha="$(git rev-parse "${baseline_tag}^{commit}")"
           fi
 
-          changed_lines="$(git diff --numstat "$baseline_sha..$dev_sha" -- . ':(exclude)package-lock.json' | awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ { total += $1 + $2 } END { print total + 0 }')"
+          changed_lines="$(git diff --numstat "$baseline_sha..$master_sha" -- . ':(exclude)package-lock.json' | awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ { total += $1 + $2 } END { print total + 0 }')"
           changed_lines="${changed_lines:-0}"
           release_date="$(TZ=America/Vancouver date +%Y%m%d)"
 
           # If a prior run created today's tag but failed while building or
           # publishing, resume that exact dated release instead of creating a
-          # second release for the same dev snapshot.
+          # second release for the same master snapshot.
           resume_existing=false
-          if [[ -n "$last_nightly" && "$baseline_sha" == "$dev_sha" && "$last_nightly" =~ \.nightly\.${release_date}$ ]]; then
+          if [[ -n "$last_nightly" && "$baseline_sha" == "$master_sha" && "$last_nightly" =~ \.nightly\.${release_date}$ ]]; then
             resume_existing=true
           fi
 
           echo "Baseline: $baseline_tag ($baseline_sha)"
-          echo "Dev:      $dev_sha"
+          echo "Master:   $master_sha"
           echo "Nightly base: $nightly_base_version"
           echo "Changed lines: $changed_lines"
-          git diff --stat "$baseline_sha..$dev_sha" -- . ':(exclude)package-lock.json'
+          git diff --stat "$baseline_sha..$master_sha" -- . ':(exclude)package-lock.json'
 
           if (( changed_lines <= 10 )) && [[ "$resume_existing" != true ]]; then
             echo 'should_release=false' >> "$GITHUB_OUTPUT"
@@ -133,16 +133,16 @@ jobs:
             exit 1
           fi
 
-          git log --no-merges -n 100 --format='- %h %s' "$baseline_sha..$dev_sha" > commit-summary.md
-          git diff --stat "$baseline_sha..$dev_sha" -- . ':(exclude)package-lock.json' > diff-stat.md
-          git diff --unified=0 "$baseline_sha..$dev_sha" -- . ':(exclude)package-lock.json' > full-diff.patch
+          git log --no-merges -n 100 --format='- %h %s' "$baseline_sha..$master_sha" > commit-summary.md
+          git diff --stat "$baseline_sha..$master_sha" -- . ':(exclude)package-lock.json' > diff-stat.md
+          git diff --unified=0 "$baseline_sha..$master_sha" -- . ':(exclude)package-lock.json' > full-diff.patch
           head -c 60000 full-diff.patch > diff-preview.patch
           rm full-diff.patch
 
           {
             echo "Release version: $release_version"
-            echo "Source branch: dev"
-            echo "Source commit: $dev_sha"
+            echo "Source branch: master"
+            echo "Source commit: $master_sha"
             echo "Baseline tag: $baseline_tag"
             echo "Changed lines: $changed_lines"
             echo "Embedded app version: $app_version"
@@ -164,7 +164,7 @@ jobs:
 
           {
             echo "should_release=true"
-            echo "dev_sha=$dev_sha"
+            echo "master_sha=$master_sha"
             echo "baseline_tag=$baseline_tag"
             echo "baseline_sha=$baseline_sha"
             echo "changed_lines=$changed_lines"
@@ -219,24 +219,24 @@ jobs:
               if [[ -s commit-summary.md ]]; then
                 cat commit-summary.md
               else
-                echo '- Updated dev snapshot available in this nightly build'
+                echo '- Updated master snapshot available in this nightly build'
               fi
               echo
               echo '## Features'
               echo
-              echo 'This nightly contains the changed dev snapshot and the attached Windows and macOS installers.'
+              echo 'This nightly contains the changed master snapshot and the attached Windows and macOS installers.'
               echo
               echo '## Getting Started'
               echo
               echo '1. Download the installer for your platform from the assets below'
               echo '2. Add your API key for Groq, OpenAI, or Google'
-              echo '3. Hold **Ctrl+Win** on Windows or **fn+Control** on macOS and start talking'
+              echo '3. Hold **Ctrl+Win** on Windows or **Option+Space** on macOS and start talking'
               echo '4. Release the hotkey and your cleaned-up text appears in the active app'
               echo
               echo '## Shortcuts'
               echo
               echo '- **Windows hold-to-record** - Hold **Ctrl+Win** to record, release to transcribe and inject'
-              echo '- **macOS hold-to-record** - Hold **fn+Control** to record, release to transcribe and inject'
+              echo '- **macOS hold-to-record** - Hold **Option+Space** to record, release to transcribe and inject'
               echo
               echo '## Lightweight & Local'
               echo
@@ -265,26 +265,26 @@ jobs:
         if: steps.changes.outputs.should_release == 'true' && steps.changes.outputs.tag_exists != 'true'
         shell: bash
         env:
-          DEV_SHA: ${{ steps.changes.outputs.dev_sha }}
+          MASTER_SHA: ${{ steps.changes.outputs.master_sha }}
           APP_VERSION: ${{ steps.changes.outputs.app_version }}
           RELEASE_VERSION: ${{ steps.changes.outputs.release_version }}
           RELEASE_TAG: ${{ steps.changes.outputs.release_tag }}
         run: |
           set -euo pipefail
 
-          # The commit is intentionally not pushed to dev or master. The tag
+          # The commit is intentionally not pushed to master. The tag
           # contains the release-only version while its parent remains the
-          # exact dev snapshot that was inspected above.
-          git checkout --detach "$DEV_SHA"
+          # exact master snapshot that was inspected above.
+          git checkout --detach "$MASTER_SHA"
           version_files=(
             package.json
             src-tauri/tauri.conf.json
             src-tauri/Cargo.toml
           )
-          restore_dev_versions() {
-            git restore --source "$DEV_SHA" -- "${version_files[@]}"
+          restore_master_versions() {
+            git restore --source "$MASTER_SHA" -- "${version_files[@]}"
           }
-          trap restore_dev_versions EXIT
+          trap restore_master_versions EXIT
 
           node - "$APP_VERSION" <<'NODE'
           const fs = require('node:fs');
@@ -330,10 +330,10 @@ jobs:
           git push origin "$RELEASE_TAG"
 
           # The version bump belongs only to the tag snapshot. Restore the
-          # exact dev values before this job exits, including on failure.
-          restore_dev_versions
-          if ! git diff --quiet "$DEV_SHA" -- "${version_files[@]}"; then
-            echo 'Release-only version files did not roll back to dev.' >&2
+          # exact master values before this job exits, including on failure.
+          restore_master_versions
+          if ! git diff --quiet "$MASTER_SHA" -- "${version_files[@]}"; then
+            echo 'Release-only version files did not roll back to master.' >&2
             exit 1
           fi
           trap - EXIT

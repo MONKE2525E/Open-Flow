@@ -1,5 +1,6 @@
 <script lang="ts" module>
   import { invoke } from '../tauri';
+  import { createIconCache } from '../iconCache';
 
   /**
    * Favicons are resolved by the backend (`get_site_icon`) rather than loaded
@@ -12,7 +13,7 @@
    * dedup on top, so a sidebar full of rows referencing the same site issues
    * one call, and remounting a row costs nothing.
    */
-  const siteIconCache = new Map<string, Promise<string | null>>();
+  const siteIconCache = createIconCache();
 
   /** Mirrors `normalize_favicon_host` in src-tauri/src/system/icons.rs. */
   function normalizeHost(input: string): string {
@@ -28,14 +29,7 @@
   function loadSiteIcon(domain: string): Promise<string | null> {
     const host = normalizeHost(domain);
     if (!host) return Promise.resolve(null);
-    let pending = siteIconCache.get(host);
-    if (!pending) {
-      // A rejected/failed lookup stays cached as `null` — no retry storm on a
-      // site that simply has no reachable icon.
-      pending = invoke<string | null>('get_site_icon', { domain: host }).catch(() => null);
-      siteIconCache.set(host, pending);
-    }
-    return pending;
+    return siteIconCache.get(host, () => invoke<string | null>('get_site_icon', { domain: host }));
   }
 </script>
 

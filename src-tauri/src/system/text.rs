@@ -221,7 +221,8 @@ pub fn strip_filler_hesitations(text: &str) -> String {
     // know". Remove it only at the end of a sentence or immediately before a
     // discourse connector, where it is unambiguously a filler.
     for index in 0..tokens.len().saturating_sub(2) {
-        let is_you = matches!(&tokens[index], FillerTok::Word(word) if word.eq_ignore_ascii_case("you"));
+        let is_you =
+            matches!(&tokens[index], FillerTok::Word(word) if word.eq_ignore_ascii_case("you"));
         let is_know = matches!(&tokens[index + 2], FillerTok::Word(word) if word.eq_ignore_ascii_case("know"));
         if !is_you || !matches!(&tokens[index + 1], FillerTok::Other(_)) || !is_know {
             continue;

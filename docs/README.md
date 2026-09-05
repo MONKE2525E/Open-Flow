@@ -9,6 +9,7 @@ This directory contains user, contributor, release, and architecture docs for Ve
 - [Your First Dictation](FIRST_DICTATION.md)
 - [Data And Privacy](DATA_AND_PRIVACY.md)
 - [Troubleshooting](TROUBLESHOOTING.md)
+- [Appearance and settings](APPEARANCE.md)
 
 ## Features
 
@@ -38,7 +39,7 @@ Contexts are the current home for app and website targets, cleanup settings, voc
 
 ## Maintainer Notes
 
-- [`../CLAUDE.md`](../CLAUDE.md) is the detailed agent and architecture context used by AI coding tools.
+- [`../AGENTS.md`](../AGENTS.md) is the canonical agent and architecture context used by AI coding tools.
 - [`../Agent-Skills/`](../Agent-Skills/) contains task-specific agent playbooks.
 - [`../.github/`](../.github/) contains GitHub Actions, PR templates, issue forms, and review instructions.
 

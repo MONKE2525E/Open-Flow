@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,6 +13,11 @@ const macDevRunner = path.join(__dirname, 'tauri-macos-dev-runner.mjs');
 const macDevConfig = path.join(repoRoot, 'src-tauri', 'tauri.dev.conf.json');
 
 const args = process.argv.slice(2);
+
+if (process.platform === 'win32' && isReleaseBuild(args)) {
+  assertWindowsBuildSpace();
+  removeStaleNsisInstallers();
+}
 
 if (
   process.platform === 'darwin' &&
@@ -45,6 +51,7 @@ child.on('exit', (code, signal) => {
     process.kill(process.pid, signal);
     return;
   }
+
   process.exit(code ?? 0);
 });
 
@@ -66,4 +73,35 @@ function hasConfigOption(args) {
     if (arg === '-c' || arg === '--config' || arg.startsWith('--config=')) return true;
   }
   return false;
+}
+
+function isReleaseBuild(args) {
+  return args[0] === 'build' && !args.includes('--debug') && !args.includes('-d');
+}
+
+function assertWindowsBuildSpace() {
+  const systemRoot = process.env.SystemDrive || path.parse(process.env.LOCALAPPDATA || 'C:\\').root;
+  const minimumFreeBytes = 512 * 1024 * 1024;
+  const stats = fs.statfsSync(systemRoot);
+  const freeBytes = Number(stats.bavail) * Number(stats.bsize);
+
+  if (freeBytes < minimumFreeBytes) {
+    const freeMiB = Math.floor(freeBytes / 1024 / 1024);
+    console.error(
+      `Refusing to build Windows installers: ${systemRoot} has only ${freeMiB} MiB free. ` +
+        'Free at least 512 MiB before building; NSIS can otherwise leave a corrupt installer.',
+    );
+    process.exit(1);
+  }
+}
+
+function removeStaleNsisInstallers() {
+  const nsisBundleDir = path.join(repoRoot, 'src-tauri', 'target', 'release', 'bundle', 'nsis');
+  if (!fs.existsSync(nsisBundleDir)) return;
+
+  for (const entry of fs.readdirSync(nsisBundleDir, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith('.exe')) {
+      fs.rmSync(path.join(nsisBundleDir, entry.name));
+    }
+  }
 }

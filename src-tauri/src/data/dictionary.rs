@@ -39,7 +39,15 @@ pub fn build_relevant_dictionary_prompt_from_sources(
     .into_iter()
     .enumerate()
     .filter_map(|(index, source)| {
-        source.map(|(text, weight)| (index, text, weight, text.to_lowercase(), tokenize_lower_alnum(text)))
+        source.map(|(text, weight)| {
+            (
+                index,
+                text,
+                weight,
+                text.to_lowercase(),
+                tokenize_lower_alnum(text),
+            )
+        })
     })
     .collect::<Vec<_>>();
 
@@ -552,7 +560,10 @@ mod tests {
             .collect();
         let prompt = build_relevant_dictionary_prompt_from_sources(&entries, "one", None, None);
         assert!(prompt.chars().count() <= 3_000);
-        assert_eq!(prompt.lines().filter(|line| line.starts_with("- ")).count(), 8);
+        assert_eq!(
+            prompt.lines().filter(|line| line.starts_with("- ")).count(),
+            8
+        );
     }
 
     #[test]

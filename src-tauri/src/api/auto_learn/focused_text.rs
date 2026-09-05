@@ -155,26 +155,28 @@ unsafe fn read_context_edges(
         .ok()?;
     let right_text = right.GetText(-1).ok()?.to_string();
 
-    let left_at_document_start = left_moved == 0 || document_range.is_some_and(|document| {
-        matches!(
-            range.CompareEndpoints(
-                TextPatternRangeEndpoint_Start,
-                document,
-                TextPatternRangeEndpoint_Start,
-            ),
-            Ok(0)
-        )
-    });
-    let right_at_document_end = right_moved == 0 || document_range.is_some_and(|document| {
-        matches!(
-            range.CompareEndpoints(
-                TextPatternRangeEndpoint_End,
-                document,
-                TextPatternRangeEndpoint_End,
-            ),
-            Ok(0)
-        )
-    });
+    let left_at_document_start = left_moved == 0
+        || document_range.is_some_and(|document| {
+            matches!(
+                range.CompareEndpoints(
+                    TextPatternRangeEndpoint_Start,
+                    document,
+                    TextPatternRangeEndpoint_Start,
+                ),
+                Ok(0)
+            )
+        });
+    let right_at_document_end = right_moved == 0
+        || document_range.is_some_and(|document| {
+            matches!(
+                range.CompareEndpoints(
+                    TextPatternRangeEndpoint_End,
+                    document,
+                    TextPatternRangeEndpoint_End,
+                ),
+                Ok(0)
+            )
+        });
 
     Some(ContextEdges {
         left_reliable: !left_text.is_empty() || left_at_document_start,

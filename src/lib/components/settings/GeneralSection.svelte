@@ -1019,10 +1019,10 @@
     padding: 20px 20px 0;
   }
   .modal-title {
-    font-family: var(--serif);
-    font-size: 18px;
-    font-weight: 500;
-    letter-spacing: -0.015em;
+    font-family: var(--sans);
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
     color: var(--ink);
     margin: 0;
   }

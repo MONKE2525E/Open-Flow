@@ -92,7 +92,7 @@ const BASE_ENTRIES: SettingsSearchEntry[] = [
   { id: 'about-source', section: 'about', label: 'Source', description: 'Open the Verenu source code', target: 'about-source', keywords: ['github', 'repository'] },
   { id: 'about-setup', section: 'about', label: 'Setup', description: 'Run onboarding again', target: 'about-setup', keywords: ['onboarding', 'provider', 'defaults'] },
   { id: 'about-updates', section: 'about', label: 'Updates', description: 'Check for a newer Verenu release', target: 'about-updates', keywords: ['upgrade', 'release'] },
-  { id: 'about-beta', section: 'about', label: 'Beta updates', description: 'Receive early development releases', target: 'about-beta', keywords: ['preview', 'development'] },
+  { id: 'about-beta', section: 'about', label: 'Beta updates', description: 'Receive early prerelease builds from master', target: 'about-beta', keywords: ['preview', 'development'] },
 
   { id: 'permissions-macos', section: 'permissions', label: 'macOS permissions', description: 'Manage microphone, accessibility, and Keychain access', target: 'permissions', keywords: ['microphone', 'accessibility', 'keychain'] },
   { id: 'apps-mappings', section: 'apps', label: 'App mappings', description: 'Configure per-app cleanup and tone overrides', target: 'apps-mappings', keywords: ['applications', 'tone', 'legacy'] },

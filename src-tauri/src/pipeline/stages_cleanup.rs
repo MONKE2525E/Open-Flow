@@ -11,7 +11,9 @@ use super::*;
 // deliver the transcription without cleanup if both attempts stall.
 const CLEANUP_FAST_ATTEMPT_TIMEOUT_SECS: u64 = 3;
 const CLEANUP_FAST_ATTEMPTS: u8 = 2;
-const CLEANUP_PROMPT_VERSION: &str = "dictation-v3";
+// Bump this whenever cleanup instructions change so previously generated
+// output cannot mask the new prompt through the cleanup-result cache.
+const CLEANUP_PROMPT_VERSION: &str = "dictation-v8";
 
 fn cleanup_soft_timeout_error(provider: &str, model: &str) -> anyhow::Error {
     anyhow::anyhow!(
@@ -695,11 +697,8 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
             }
             prompt_context.push_str(&dictionary_evidence);
         }
-        let context_fingerprint = dual_cleanup_context_fingerprint(
-            cfg,
-            &prompt_context,
-            app_context,
-        );
+        let context_fingerprint =
+            dual_cleanup_context_fingerprint(cfg, &prompt_context, app_context);
         let cache_plan = cleanup_cache_plan_for_context(
             &expanded,
             profile,

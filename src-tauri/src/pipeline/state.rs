@@ -55,6 +55,12 @@ pub struct AppState {
     pub cancelled_capture: Option<CancelledCapture>,
     pub paste_failure: Option<PasteFailure>,
     pub repair: Option<super::repair::RepairSession>,
+    /// Id of the in-flight durable dictation, if any.
+    pub failover_session_id: Option<String>,
+    /// When true, the next durable start reuses `failover_session_id` (resume).
+    pub failover_reuse_id: bool,
+    /// Wall-clock start of the current durable take, used when committing.
+    pub failover_started_at_unix: i64,
     /// Set only by the hotkey path when a Press was routed into the repair
     /// pill's complaint recording (see app_hotkey.rs) — checked and cleared
     /// on the matching Release so that release routes to the same place the
@@ -156,6 +162,21 @@ pub struct RetryCapture {
     pub caps_lock_on: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaptureOrigin {
+    UserCancelled,
+    Interrupted,
+}
+
+impl CaptureOrigin {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CaptureOrigin::UserCancelled => "cancelled",
+            CaptureOrigin::Interrupted => "interrupted",
+        }
+    }
+}
+
 /// Audio from a recording the user cancelled, kept around briefly so the
 /// pill's "Cancelled" state can offer a Continue button that resumes
 /// recording (hands-free) with this audio prepended — see
@@ -165,6 +186,10 @@ pub struct RetryCapture {
 pub struct CancelledCapture {
     pub audio: CapturedAudio,
     pub captured_at: std::time::Instant,
+    pub id: String,
+    pub origin: CaptureOrigin,
+    pub created_at_rfc3339: String,
+    pub started_at_unix: i64,
 }
 
 /// Final injected text from a dictation whose paste couldn't be confirmed
@@ -217,11 +242,11 @@ pub fn reserve_starting(state: &SharedState) -> Result<(), String> {
 /// Reads the stashed cancelled capture (cloned) if present and fresh, without
 /// consuming it — so a resume attempt that fails partway doesn't destroy the
 /// resumable audio.
-pub fn peek_cancelled_capture_if_fresh(state: &SharedState) -> Option<CapturedAudio> {
+pub fn peek_cancelled_capture_if_fresh(state: &SharedState) -> Option<CancelledCapture> {
     let st = lock_state(state).ok()?;
     st.cancelled_capture.as_ref().and_then(|c| {
         if c.captured_at.elapsed() < CANCEL_RESUME_WINDOW {
-            Some(c.audio.clone())
+            Some(c.clone())
         } else {
             None
         }
@@ -233,6 +258,31 @@ pub fn peek_cancelled_capture_if_fresh(state: &SharedState) -> Option<CapturedAu
 pub fn clear_cancelled_capture(state: &SharedState) {
     if let Ok(mut st) = lock_state(state) {
         st.cancelled_capture = None;
+    }
+}
+
+/// Expiry must release audio even if the user never invokes Retry or Resume.
+/// Keep the small metadata record so existing expired-retry errors and durable
+/// recovery bookkeeping retain their semantics. Other live owners keep their
+/// Arc/Bytes handles, so an in-flight pipeline is unaffected.
+pub fn release_expired_capture_audio(state: &SharedState) {
+    fn release(audio: &mut CapturedAudio) {
+        if !audio.wav.is_empty() || !audio.samples_16k.is_empty() {
+            audio.wav = bytes::Bytes::new();
+            audio.samples_16k = Arc::new(Vec::new());
+        }
+    }
+    if let Ok(mut st) = lock_state(state) {
+        if let Some(retry) = st.retry_capture.as_mut() {
+            if retry.captured_at.elapsed() > RETRY_WINDOW {
+                release(&mut retry.audio);
+            }
+        }
+        if let Some(cancelled) = st.cancelled_capture.as_mut() {
+            if cancelled.captured_at.elapsed() >= CANCEL_RESUME_WINDOW {
+                release(&mut cancelled.audio);
+            }
+        }
     }
 }
 
@@ -611,13 +661,13 @@ pub(super) fn emit_pipeline_failed(app: &AppHandle) {
 
 /// Tells any open window (Home's history list in particular) that a
 /// recording was just cancelled and its audio is resumable for
-/// `CANCEL_RESUME_WINDOW`. Mirrors `emit_pipeline_failed`'s payload shape.
-pub(super) fn emit_cancelled_capture(app: &AppHandle) {
-    app.emit(
-        "verenu:cancelled-capture",
-        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-    )
-    .ok();
+/// `CANCEL_RESUME_WINDOW`.
+pub(super) fn emit_cancelled_capture(app: &AppHandle, capture: &CancelledCapture) {
+    super::failover::emit_cancelled_payload(
+        app,
+        &capture.created_at_rfc3339,
+        capture.origin.as_str(),
+    );
 }
 
 /// Tells any open window that the current cancelled capture is gone —
@@ -708,6 +758,9 @@ mod tests {
             paste_failure: None,
             repair: None,
             hotkey_recording_repair_complaint: false,
+            failover_session_id: None,
+            failover_reuse_id: false,
+            failover_started_at_unix: 0,
         }))
     }
 
@@ -746,11 +799,18 @@ mod tests {
             st.cancelled_capture = Some(CancelledCapture {
                 audio: fake_audio(500),
                 captured_at: std::time::Instant::now(),
+                id: "test-id".into(),
+                origin: CaptureOrigin::UserCancelled,
+                created_at_rfc3339: "2026-01-01T00:00:00Z".into(),
+                started_at_unix: 0,
             });
         }
         // Peeking clones — the slot must survive for the later clear.
         assert_eq!(
-            peek_cancelled_capture_if_fresh(&state).unwrap().duration_ms,
+            peek_cancelled_capture_if_fresh(&state)
+                .unwrap()
+                .audio
+                .duration_ms,
             500
         );
         assert!(lock_state(&state).unwrap().cancelled_capture.is_some());
@@ -764,10 +824,63 @@ mod tests {
             st.cancelled_capture = Some(CancelledCapture {
                 audio: fake_audio(500),
                 captured_at: std::time::Instant::now(),
+                id: "test-id".into(),
+                origin: CaptureOrigin::UserCancelled,
+                created_at_rfc3339: "2026-01-01T00:00:00Z".into(),
+                started_at_unix: 0,
             });
         }
         clear_cancelled_capture(&state);
         assert!(lock_state(&state).unwrap().cancelled_capture.is_none());
+    }
+
+    #[test]
+    fn expired_audio_is_released_without_consuming_fresh_or_live_owners() {
+        let state = fresh_state();
+        let audio = fake_audio(500);
+        let live_owner = audio.samples_16k.clone();
+        {
+            let mut st = lock_state(&state).unwrap();
+            st.cancelled_capture = Some(CancelledCapture {
+                audio: audio.clone(),
+                captured_at: std::time::Instant::now(),
+                id: "expiry-test".into(),
+                origin: CaptureOrigin::UserCancelled,
+                created_at_rfc3339: "2026-01-01T00:00:00Z".into(),
+                started_at_unix: 0,
+            });
+            st.retry_capture = Some(RetryCapture {
+                audio,
+                captured_at: std::time::Instant::now()
+                    - RETRY_WINDOW
+                    - std::time::Duration::from_secs(1),
+                target: WindowTarget::default(),
+                process_name: String::new(),
+                context_id: 1,
+                profile: String::new(),
+                app_context: None,
+                caps_lock_on: false,
+            });
+        }
+        release_expired_capture_audio(&state);
+        {
+            let mut st = lock_state(&state).unwrap();
+            assert!(st
+                .retry_capture
+                .as_ref()
+                .unwrap()
+                .audio
+                .samples_16k
+                .is_empty());
+            let capture = st.cancelled_capture.as_mut().unwrap();
+            assert_eq!(capture.audio.samples_16k.len(), 16);
+            capture.captured_at = std::time::Instant::now() - CANCEL_RESUME_WINDOW;
+        }
+        release_expired_capture_audio(&state);
+        assert_eq!(Arc::strong_count(&live_owner), 1);
+        assert_eq!(live_owner.len(), 16);
+        assert!(peek_cancelled_capture_if_fresh(&state).is_none());
+        assert!(lock_state(&state).unwrap().retry_capture.is_some());
     }
 
     #[test]

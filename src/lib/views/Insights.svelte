@@ -3,6 +3,7 @@
   import { fade, fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { invoke, listen } from '../tauri';
+  import { startPolling } from '../polling';
   import { formatIpcError } from '../stores';
   import { MOTION_MS, motionMs } from '../motion';
   import Dropdown from '../components/Dropdown.svelte';
@@ -103,11 +104,14 @@
     mounted = true;
     void loadContexts();
     load();
+    // Events keep dictations current; reconcile missed events and date rollover
+    // once a minute while visible, and immediately when the window returns.
+    const poll = startPolling(() => load({ silent: true }), 60_000, { immediate: false });
     let unlisten: (() => void) | undefined;
     // Refresh live as new dictations land, so the page never shows stale
     // numbers while it's open. Silent so a background refresh never flashes
     // the loading state.
-    listen('verenu:transcribed', () => load({ silent: true }))
+    listen('verenu:transcribed', () => { if (!document.hidden) poll.request(); })
       .then((cleanup) => {
         // If the component already unmounted while `listen` was still
         // resolving, tear the listener down immediately rather than leaking
@@ -119,14 +123,10 @@
         }
       })
       .catch(() => {});
-    // Belt and suspenders: poll on a fixed cadence too, so the page catches
-    // up even when a transcription event was missed (e.g. it landed before
-    // the page opened). Silent ticks never flash the loading state.
-    const timer = setInterval(() => load({ silent: true }), 10_000);
     return () => {
       mounted = false;
       unlisten?.();
-      clearInterval(timer);
+      poll.stop();
     };
   });
 </script>
@@ -291,10 +291,10 @@
   }
 
   .page-h {
-    font-family: var(--serif);
-    font-size: 26px;
-    font-weight: 500;
-    letter-spacing: -0.02em;
+    font-family: var(--sans);
+    font-size: 23px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
     margin: 0 0 4px;
     line-height: 1.1;
     color: var(--ink);
@@ -368,8 +368,8 @@
 
   /* Matches .settings-subhead — 17px was a card title, this is a section head. */
   .content-inner :global(.card-h) {
-    font-family: var(--serif);
-    font-size: 14px;
+    font-family: var(--sans);
+    font-size: 13px;
     font-weight: 500;
     margin: 0;
     color: var(--ink-soft);
@@ -419,9 +419,9 @@
   }
 
   .empty-h {
-    font-family: var(--serif);
-    font-style: italic;
-    font-size: 17px;
+    font-family: var(--sans);
+    font-style: normal;
+    font-size: 15px;
     font-weight: 500;
     color: var(--ink-soft);
     margin: 0;

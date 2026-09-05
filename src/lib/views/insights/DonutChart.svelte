@@ -488,17 +488,17 @@
     pointer-events: none;
   }
   .donut-primary {
-    font-family: var(--serif);
-    font-size: 19px;
-    font-weight: 500;
+    font-family: var(--sans);
+    font-size: 18px;
+    font-weight: 600;
     color: var(--ink);
     font-variant-numeric: tabular-nums;
     line-height: 1;
   }
   .donut-secondary {
     font-size: 10px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     color: var(--ink-mute);
   }
 

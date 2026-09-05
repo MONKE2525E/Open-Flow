@@ -27,12 +27,12 @@ pub type DbHandle = db::Db;
 
 // Startup helpers live in app_setup.rs; re-exported here so the rest of the
 // crate can keep using `crate::` paths.
+#[cfg(target_os = "macos")]
+pub(crate) use app_setup::hide_main_window;
 pub(crate) use app_setup::{
     app_data_dir, app_db_path, fatal_startup_error, show_main_window, start_frontend_watchdog,
     FrontendReadiness,
 };
-#[cfg(target_os = "macos")]
-pub(crate) use app_setup::hide_main_window;
 #[cfg(target_os = "windows")]
 pub(crate) use app_setup::{cleanup_update_helper_if_requested, wait_for_relaunch_parent_exit};
 pub(crate) use app_tray::apply_runtime_icons;
@@ -66,6 +66,9 @@ fn main() {
         paste_failure: None,
         repair: None,
         hotkey_recording_repair_complaint: false,
+        failover_session_id: None,
+        failover_reuse_id: false,
+        failover_started_at_unix: 0,
     }));
 
     std::fs::create_dir_all(app_data_dir()).ok();
@@ -75,6 +78,7 @@ fn main() {
     // exists. init_early captures those records in the ring buffer;
     // attach_app in setup enables frontend forwarding.
     crate::system::logger::init_early();
+    pipeline::failover::restore_into_state(&shared);
     let db_handle: DbHandle = match db::open_with_recovery(app_db_path()) {
         Ok(db) => db,
         Err(err) => fatal_startup_error(&format!("failed to open database: {err}")),
@@ -222,10 +226,18 @@ fn main() {
 
             // LAN device sync: identity, mDNS discovery, listener, sessions.
             // Soft-fails internally — never blocks startup.
-            app.manage(sync::SyncManager::start(
-                app.handle().clone(),
-                app.state::<DbHandle>().inner().clone(),
-            ));
+            let sync_enabled = settings
+                .get(crate::data::store::SYNC_ENABLED)
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            if sync_enabled {
+                app.manage(sync::SyncManager::start(
+                    app.handle().clone(),
+                    app.state::<DbHandle>().inner().clone(),
+                ));
+            } else {
+                log::info!("sync: disabled by setting");
+            }
 
             app_tray::setup_tray(app)?;
             #[cfg(target_os = "windows")]
@@ -277,10 +289,12 @@ fn main() {
             }
             let local_stt_manager = local_transcription_manager.clone();
             let local_llm_manager = local_cleanup_manager.clone();
+            let capture_state = shared.clone();
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    pipeline::release_expired_capture_audio(&capture_state);
                     // && (not ||): either manager signalling shutdown on its
                     // own must not stop monitoring the other still-active one.
                     if local_stt_manager
@@ -499,6 +513,7 @@ fn main() {
             commands::stop_handless_mode,
             commands::resume_cancelled_capture,
             commands::dismiss_cancelled_capture,
+            commands::get_cancelled_capture,
             commands::copy_paste_failure_to_clipboard,
             commands::set_pill_size,
             commands::get_installed_apps,
@@ -580,6 +595,7 @@ fn main() {
             // indefinitely and holding the loaded model's RAM/VRAM.
             if let tauri::RunEvent::Exit = _event {
                 log::info!("app exiting; unloading local models");
+                crate::pipeline::failover::flush_on_exit(_app);
                 crate::system::shutdown_local_models(_app);
                 #[cfg(target_os = "windows")]
                 app_tray::cleanup_runtime_icon_files();
@@ -589,8 +605,7 @@ fn main() {
 }
 
 #[cfg(target_os = "windows")]
-static TITLEBAR_REFRESH_GEN: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+static TITLEBAR_REFRESH_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Re-read native title-bar metrics once the window size has settled (150ms
 /// with no further `Resized` event). A live resize delivers one event per

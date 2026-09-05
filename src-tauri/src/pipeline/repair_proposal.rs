@@ -402,4 +402,3 @@ pub(super) fn validate_action(
         scope,
     })
 }
-

@@ -551,6 +551,7 @@
   .picker-wrap {
     position: fixed;
     inset: 0;
+    box-sizing: border-box;
     z-index: 60;
     display: grid;
     place-items: center;
@@ -567,7 +568,8 @@
   .picker-card {
     position: relative;
     z-index: 1;
-    width: min(720px, 94vw);
+    width: min(720px, calc(100% - 32px));
+    max-width: 100%;
     height: min(600px, 88vh);
     background: var(--bg-elev);
     border: 1px solid var(--line);
@@ -1107,6 +1109,25 @@
     .rail-count,
     .rail-name {
       white-space: nowrap;
+    }
+
+    .picker-head,
+    .picker-search-row,
+    .picker-foot {
+      padding-left: 14px;
+      padding-right: 14px;
+    }
+
+    .custom-row {
+      flex-wrap: wrap;
+    }
+
+    .custom-label {
+      flex: 1 1 100%;
+    }
+
+    .custom-input {
+      min-width: 0;
     }
   }
 </style>

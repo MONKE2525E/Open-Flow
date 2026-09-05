@@ -15,6 +15,7 @@ use chrono::{DateTime, Duration, NaiveDateTime, SecondsFormat, Utc};
 mod cache;
 mod chains;
 mod clipboard_phrase;
+pub(crate) mod failover;
 mod finalize;
 #[cfg(any(test, debug_assertions))]
 mod fixture;
@@ -48,7 +49,10 @@ pub(crate) use pill::{
     emit_pill_context, emit_pill_stage, hide_pill, pill_wants_repair_focus,
     show_clipboard_warning_pill, show_copied_pill, show_pill, update_pill_state,
 };
-use pill::{reject_with_pill, show_cancelled_pill, show_error_pill, show_paste_failed_pill};
+use pill::{
+    reject_with_pill, show_cancelled_pill, show_error_pill, show_interrupted_pill,
+    show_paste_failed_pill,
+};
 pub(crate) use pill_position::{
     apply_pill_placement, placement_for_current_monitor, PillPlacement,
 };
@@ -334,6 +338,9 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     let Some((mut captured_audio, mut rms, mut raw_rms)) =
         stop_and_capture_audio(&app, session, exclusive_mic_session_id).await
     else {
+        // stop_and_capture_audio already abandons live on its own failure
+        // paths; call again so a future None return cannot leave a spool.
+        failover::abandon_live();
         state::leave_stopping_if_owned(&state, generation);
         return;
     };
@@ -344,6 +351,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
                 Err(err) => {
                     log::error!("pipeline: {err}");
                     reject_with_pill(&app, "Failed to prepare recording audio");
+                    failover::abandon_live();
                     state::leave_stopping_if_owned(&state, generation);
                     return;
                 }
@@ -367,6 +375,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         silence_floor,
         active_gain,
     ) {
+        failover::abandon_live();
         state::leave_stopping_if_owned(&state, generation);
         return;
     }
@@ -388,6 +397,28 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         captured_audio: captured_audio.clone(),
         target,
     };
+    {
+        let (id, started) = lock_state(&state)
+            .ok()
+            .map(|st| (st.failover_session_id.clone(), st.failover_started_at_unix))
+            .unwrap_or((None, 0));
+        if let Some(id) = id {
+            let started = if started != 0 {
+                started
+            } else {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0)
+            };
+            failover::commit_capture(
+                &captured_audio,
+                &id,
+                failover::FailoverKind::Processing,
+                started,
+            );
+        }
+    }
     if !state::install_processing(&state, generation, active) {
         // Superseded between Stopping and here (should not happen in
         // practice — nothing else can transition out of Stopping — but an

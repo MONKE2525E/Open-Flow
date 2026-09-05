@@ -108,12 +108,7 @@ pub fn get_peer(conn: &Connection, device_uuid: &str) -> Result<Option<SyncPeer>
 
 /// Inserts or updates a paired device. `cert_fp` is the hex SHA-256 of the
 /// peer's certificate DER - the pin every future connection is checked against.
-pub fn upsert_peer(
-    conn: &Connection,
-    device_uuid: &str,
-    name: &str,
-    cert_fp: &str,
-) -> Result<()> {
+pub fn upsert_peer(conn: &Connection, device_uuid: &str, name: &str, cert_fp: &str) -> Result<()> {
     conn.execute(
         "INSERT INTO sync_peers (device_uuid, name, cert_fp, needs_snapshot)
          VALUES (?1, ?2, ?3, 1)
@@ -267,7 +262,14 @@ pub fn append_op(
     conn.execute(
         "INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![op.table_name(), op.row_uuid, op.op_name(), ts_ms, origin, origin_seq],
+        params![
+            op.table_name(),
+            op.row_uuid,
+            op.op_name(),
+            ts_ms,
+            origin,
+            origin_seq
+        ],
     )?;
     Ok(())
 }
@@ -315,11 +317,9 @@ pub fn changes_since(conn: &Connection, after_seq: i64, limit: i64) -> Result<Ve
 }
 
 pub fn max_log_seq(conn: &Connection) -> Result<i64> {
-    let seq: i64 = conn.query_row(
-        "SELECT COALESCE(MAX(seq), 0) FROM sync_log",
-        [],
-        |r| r.get(0),
-    )?;
+    let seq: i64 = conn.query_row("SELECT COALESCE(MAX(seq), 0) FROM sync_log", [], |r| {
+        r.get(0)
+    })?;
     Ok(seq)
 }
 
@@ -329,11 +329,7 @@ pub fn max_log_seq(conn: &Connection) -> Result<i64> {
 /// its delta; if it stays away too long it falls back to a full snapshot.
 pub fn compact_log(conn: &Connection) -> Result<usize> {
     let min_cursor: Option<i64> = conn
-        .query_row(
-            "SELECT MIN(send_cursor) FROM sync_peers",
-            [],
-            |r| r.get(0),
-        )
+        .query_row("SELECT MIN(send_cursor) FROM sync_peers", [], |r| r.get(0))
         .optional()?
         .flatten();
     let Some(min_cursor) = min_cursor else {
@@ -355,9 +351,8 @@ pub fn compact_log(conn: &Connection) -> Result<usize> {
 }
 
 pub fn list_remote_stats(conn: &Connection) -> Result<Vec<DeviceStats>> {
-    let mut stmt = conn.prepare(
-        "SELECT device_id, total_words, dictionary_fixes FROM sync_remote_stats",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT device_id, total_words, dictionary_fixes FROM sync_remote_stats")?;
     let rows = stmt
         .query_map([], |r| {
             Ok(DeviceStats {
@@ -421,7 +416,10 @@ pub fn list_setting_stamps(conn: &Connection) -> Result<Vec<(String, SettingStam
         .query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
-                SettingStamp { ts_ms: r.get(1)?, origin: r.get(2)? },
+                SettingStamp {
+                    ts_ms: r.get(1)?,
+                    origin: r.get(2)?,
+                },
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -433,7 +431,12 @@ pub fn get_setting_stamp(conn: &Connection, key: &str) -> Result<Option<SettingS
         .query_row(
             "SELECT ts_ms, origin FROM sync_setting_meta WHERE key = ?1",
             params![key],
-            |r| Ok(SettingStamp { ts_ms: r.get(0)?, origin: r.get(1)? }),
+            |r| {
+                Ok(SettingStamp {
+                    ts_ms: r.get(0)?,
+                    origin: r.get(1)?,
+                })
+            },
         )
         .optional()?;
     Ok(row)
@@ -470,5 +473,3 @@ pub fn now_ms() -> i64 {
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
 }
-
-

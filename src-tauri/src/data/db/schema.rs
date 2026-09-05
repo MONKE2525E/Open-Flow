@@ -531,8 +531,18 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
         // Columns declared in SCHEMA for fresh databases; ensure_table_column
         // is idempotent for databases that already have them.
         run_migration(&mut conn, |conn| {
-            ensure_table_column(conn, "contexts", "icon", "ALTER TABLE contexts ADD COLUMN icon TEXT;")?;
-            ensure_table_column(conn, "contexts", "tone", "ALTER TABLE contexts ADD COLUMN tone TEXT;")?;
+            ensure_table_column(
+                conn,
+                "contexts",
+                "icon",
+                "ALTER TABLE contexts ADD COLUMN icon TEXT;",
+            )?;
+            ensure_table_column(
+                conn,
+                "contexts",
+                "tone",
+                "ALTER TABLE contexts ADD COLUMN tone TEXT;",
+            )?;
             ensure_table_column(
                 conn,
                 "contexts",
@@ -561,7 +571,12 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
         // fresh databases; ensure_table_column is idempotent for databases
         // that already have it.
         run_migration(&mut conn, |conn| {
-            ensure_table_column(conn, "contexts", "color", "ALTER TABLE contexts ADD COLUMN color TEXT;")?;
+            ensure_table_column(
+                conn,
+                "contexts",
+                "color",
+                "ALTER TABLE contexts ADD COLUMN color TEXT;",
+            )?;
             conn.execute_batch("PRAGMA user_version = 15;")?;
             Ok(())
         })?;
@@ -1468,4 +1483,3 @@ fn backfill_spoken_words(conn: &Connection) -> Result<()> {
 
     Ok(())
 }
-

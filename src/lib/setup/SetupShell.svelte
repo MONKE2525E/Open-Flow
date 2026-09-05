@@ -116,16 +116,16 @@
   .step-label {
     margin: 4px 0 0;
     font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
     color: var(--ink-faint);
   }
 
   .setup-header h2 {
-    font-family: var(--serif);
-    font-size: 22px;
-    font-weight: 500;
+    font-family: var(--sans);
+    font-size: 20px;
+    font-weight: 600;
     color: var(--ink-strong);
     margin: 4px 0 0;
     line-height: 1.25;
@@ -267,9 +267,9 @@
   /* Uppercase group label above a set of pick-cards. */
   :global(.setup-overlay .group-label) {
     font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
     color: var(--ink-faint);
     margin: 0;
   }

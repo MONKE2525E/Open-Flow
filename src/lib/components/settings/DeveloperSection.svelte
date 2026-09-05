@@ -313,7 +313,7 @@
 
 <h2 class="settings-h">Developer</h2>
 <p class="panel-note">Session log stream from backend runtime. Dev mode resets after app restart.</p>
-<div class="setting-row beta-setting-row">
+<div class="setting-row beta-setting-row" data-setting-target="developer-sync">
   <div>
     <div class="label">LAN Device Sync</div>
     <div class="desc">Experimental encrypted device-to-device sync. Off by default; the Sync settings page is hidden until enabled.</div>
@@ -327,14 +327,14 @@
   or share contains this content in plain text — only enable verbose logging or export
   logs if you understand what they hold.
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="developer-setup">
   <div>
     <div class="label">Force Setup On Launch</div>
     <div class="desc">Shows onboarding on startup without erasing saved settings.</div>
   </div>
   <Toggle checked={forceSetupOnLaunch} onchange={handleForceSetupOnLaunch} label="Force setup on launch" />
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="developer-logs">
   <div>
     <div class="label">Real-time Logs</div>
     <div class="desc">{logs.length} lines loaded</div>
@@ -401,7 +401,7 @@
     {copied ? 'Copied' : 'Copy all'}
   </button>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="developer-download-logs">
   <div>
     <div class="label">Download Logs</div>
     <div class="desc">Writes current session logs to your Downloads folder.</div>
@@ -413,7 +413,7 @@
     {exporting ? 'Saving...' : 'Download Logs'}
   </button>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="developer-status">
   <div>
     <div class="label">Provider Status Check</div>
     <div class="desc">Fetches api.verenu.com/v1/provider-status directly and shows the raw response.</div>
@@ -425,7 +425,7 @@
 {#if providerStatusRaw}
   <pre class="raw-panel scroll-styled">{providerStatusRaw}</pre>
 {/if}
-<div class="setting-row dev-simulations">
+<div class="setting-row dev-simulations" data-setting-target="developer-simulations">
   <div>
     <div class="label">UI Simulations</div>
     <div class="desc">Preview outage, offline, and global-message notices without changing the live APIs.</div>
@@ -475,7 +475,7 @@
     <button class="btn-ghost" onclick={clearSimulations}>Clear</button>
   </div>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="developer-notifications">
   <div>
     <div class="label">System Notification Test</div>
     <div class="desc">Choose a notification type, then send the native toast and test its click destination.</div>
@@ -545,7 +545,7 @@
     </button>
   </div>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="developer-installer">
   <div>
     <div class="label">Installer Test</div>
     <div class="desc">

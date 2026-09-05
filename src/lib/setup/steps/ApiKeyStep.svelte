@@ -418,9 +418,9 @@
 
   .shot-step {
     font-size: 10.5px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.07em;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
     color: var(--ink-faint);
   }
 
@@ -466,11 +466,11 @@
     background: var(--success-bg);
     color: var(--success);
     font-size: 10.5px;
-    font-weight: 650;
-    letter-spacing: .04em;
-    text-transform: uppercase;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
   }
-  .local-intro h3 { margin: 0; font-family: var(--serif); font-size: 19px; font-weight: 500; color: var(--ink-strong); }
+  .local-intro h3 { margin: 0; font-family: var(--sans); font-size: 17px; font-weight: 600; color: var(--ink-strong); }
   .local-intro p { margin: 0; color: var(--ink-mute); font-size: 12.5px; line-height: 1.5; max-width: 590px; }
   .local-model-card {
     display: flex;

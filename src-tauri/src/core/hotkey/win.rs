@@ -407,9 +407,31 @@ impl ChordStateMachine {
         // Chord-formed edge: both keys just became down together, regardless
         // of press order. This is the second key's down-edge; the first
         // already passed through above.
-        self.chord_first_down_ms = now_ms;
         self.key1_was_chord = true;
         self.key2_was_chord = true;
+
+        if self.chord_down {
+            // Re-formation, not a new press — reclaim ownership and stop.
+            //
+            // A chord-forming edge normally implies a key went up and back
+            // down, and that keyup would have cleared `chord_down`. So finding
+            // it still set means something cleared a key's bookkeeping while it
+            // was still physically held: `reconcile_stale_key` doing its job on
+            // a keyup the hook never received, or `force_release_win_key`
+            // wiping all of it before a paste. The key then autorepeats (it IS
+            // still down), and that repeat arrives here looking like a fresh
+            // chord.
+            //
+            // Restoring ownership above is right. Restarting the hold clock is
+            // not: `held_ms` in on_key_up is measured from `chord_first_down_ms`,
+            // so a chord held for seconds would be measured from this repeat,
+            // come out under CHORD_TAP_MAX_HOLD_MS, and be classified as a tap
+            // — firing FireCancel and throwing the dictation away. That is the
+            // "every dictation gets cancelled" bug.
+            return ChordOutcome::suppress(None);
+        }
+
+        self.chord_first_down_ms = now_ms;
 
         if let TapState::AwaitingSecondTap { deadline_start_ms } = self.tap {
             if now_ms.saturating_sub(deadline_start_ms) <= CHORD_DOUBLE_TAP_WINDOW_MS {
@@ -1035,6 +1057,41 @@ mod chord_tests {
             assert_eq!(second.disposition, KeyDisposition::Suppress);
             assert!(m.chord_down);
         }
+    }
+
+    #[test]
+    fn long_hold_still_releases_after_ownership_is_reconciled_away() {
+        // Regression: every dictation got cancelled instead of transcribed.
+        //
+        // `reconcile_stale_key` (and `force_release_win_key`, which does the
+        // same thing wholesale before a paste) can clear a key's down/ownership
+        // bookkeeping while the user is still physically holding the chord —
+        // that is the entire point of it, for keyups the hook never received.
+        // But the key keeps autorepeating, and the next repeat then looked like
+        // a brand-new chord-forming edge, which reset `chord_first_down_ms` to
+        // "now". The hold length is measured from that field, so a chord held
+        // for seconds measured as a sub-200ms tap and fired FireCancel.
+        let mut m = fresh();
+        m.on_key_event(ChordKey::Key1, KeyEdge::Down, 0);
+        m.on_key_event(ChordKey::Key2, KeyEdge::Down, 5);
+        assert_eq!(m.chord_first_down_ms, 5);
+
+        // Something reconciles key2's ownership away mid-hold.
+        m.reconcile_stale_key(ChordKey::Key2, false);
+        // ...and key2 autorepeats, since it is still physically down.
+        let repeat = m.on_key_event(ChordKey::Key2, KeyEdge::Down, 3000);
+        assert_eq!(
+            repeat.action, None,
+            "a repeat mid-hold must not re-fire a press"
+        );
+        assert_eq!(
+            m.chord_first_down_ms, 5,
+            "re-forming the chord mid-hold must not restart the hold clock"
+        );
+
+        // The real release, seconds after the real press, is a hold.
+        let up = m.on_key_event(ChordKey::Key1, KeyEdge::Up, 4000);
+        assert_eq!(up.action, Some(ChordAction::FireRelease));
     }
 
     #[test]

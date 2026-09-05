@@ -54,6 +54,5 @@ pub fn gemini_generation_config(model: &str, max_output_tokens: u32) -> GeminiGe
 /// Keep the allowlist narrow: an unknown Gemini 3.x model must not receive a
 /// level it may not support and must be skipped before a request is made.
 fn gemini_3_minimal_supported(model: &str) -> bool {
-    model.contains("gemini-3.5-flash-lite")
-        || model.contains("gemini-3.5-flash")
+    model.contains("gemini-3.5-flash-lite") || model.contains("gemini-3.5-flash")
 }

@@ -10,10 +10,10 @@
 //! - Failed attempts back off exponentially up to 10 minutes.
 
 use anyhow::{anyhow, Result};
-use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+use mdns_sd::{IfKind, IfPredicate, ServiceDaemon, ServiceEvent, ServiceInfo};
 use rusqlite::OptionalExtension;
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -40,15 +40,77 @@ const PAIRING_PROMPT_LIFETIME: Duration = Duration::from_secs(180);
 const MAX_BACKOFF: Duration = Duration::from_secs(600);
 const PRIVATE_PORT_START: u16 = 49_152;
 const PRIVATE_PORT_COUNT: u32 = 16_384;
+const VIRTUAL_INTERFACE_MARKERS: &[&str] = &[
+    "tailscale",
+    "wireguard",
+    "zerotier",
+    "hamachi",
+    "openvpn",
+    "anyconnect",
+    "wintun",
+    "hyper-v",
+    "hyperv",
+    "vethernet",
+    "virtualbox",
+    "vmware",
+    "virtual",
+    "docker",
+    "wsl",
+    "teredo",
+    "isatap",
+];
+
+fn is_tailscale_address(address: Ipv4Addr) -> bool {
+    let [first, second, ..] = address.octets();
+    first == 100 && (64..=127).contains(&second)
+}
+
+fn is_link_local_address(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => address.is_link_local(),
+        IpAddr::V6(address) => address.is_unicast_link_local(),
+    }
+}
+
+fn is_discovery_advertised_address_allowed(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => {
+            !address.is_loopback()
+                && !address.is_unspecified()
+                && !address.is_link_local()
+                && !is_tailscale_address(address)
+        }
+        IpAddr::V6(_) => false,
+    }
+}
+
+pub(crate) fn is_discovery_interface_allowed(name: &str, address: IpAddr, is_p2p: bool) -> bool {
+    if is_p2p || address.is_loopback() || address.is_unspecified() || is_link_local_address(address)
+    {
+        return false;
+    }
+
+    if matches!(address, IpAddr::V4(address) if is_tailscale_address(address)) {
+        return false;
+    }
+
+    let normalized_name = name.trim().to_ascii_lowercase();
+    !VIRTUAL_INTERFACE_MARKERS
+        .iter()
+        .any(|marker| normalized_name.contains(marker))
+}
 
 /// Keep a device on the same private TCP port across app restarts. mDNS
 /// caches can retain the previous advertisement for part of its TTL; a random
 /// listener port turns that otherwise harmless stale record into an immediate
 /// connection refusal during pairing.
 pub(crate) fn listener_port_for_uuid(uuid: &str) -> u16 {
-    let hash = uuid.as_bytes().iter().fold(2_166_136_261_u32, |hash, byte| {
-        (hash ^ u32::from(*byte)).wrapping_mul(16_777_619)
-    });
+    let hash = uuid
+        .as_bytes()
+        .iter()
+        .fold(2_166_136_261_u32, |hash, byte| {
+            (hash ^ u32::from(*byte)).wrapping_mul(16_777_619)
+        });
     PRIVATE_PORT_START + (hash % PRIVATE_PORT_COUNT) as u16
 }
 
@@ -132,7 +194,6 @@ pub enum PeerState {
 pub struct PeerStatus {
     pub state: PeerState,
     pub error: Option<String>,
-    
 }
 
 #[derive(Debug, Clone)]
@@ -233,10 +294,8 @@ impl SyncManager {
             let conn = self.lock_db()?;
             sync_store::self_uuid(&conn)?
         };
-        let identity =
-            identity::load_or_create(&self.inner.data_dir, known_uuid).map_err(|e| {
-                anyhow!("identity setup failed ({e}); check the OS credential store")
-            })?;
+        let identity = identity::load_or_create(&self.inner.data_dir, known_uuid)
+            .map_err(|e| anyhow!("identity setup failed ({e}); check the OS credential store"))?;
         let identity = Arc::new(identity);
 
         // Prefer a user-set name persisted in the DB over the hostname default.
@@ -350,8 +409,13 @@ impl SyncManager {
         if let Some(previous) = self.inner.mdns.lock().await.take() {
             let _ = previous.shutdown();
         }
-        let daemon = ServiceDaemon::new()
-            .map_err(|e| anyhow!("mDNS daemon failed to start: {e}"))?;
+        let daemon =
+            ServiceDaemon::new().map_err(|e| anyhow!("mDNS daemon failed to start: {e}"))?;
+        daemon
+            .disable_interface(IfKind::Predicate(IfPredicate::new(|interface| {
+                !is_discovery_interface_allowed(&interface.name, interface.ip(), interface.is_p2p())
+            })))
+            .map_err(|e| anyhow!("mDNS interface filtering failed: {e}"))?;
         let (uuid, name, port) = {
             let guard = self.inner.identity.read().expect("identity lock");
             let identity = guard.as_ref().ok_or_else(|| anyhow!("identity missing"))?;
@@ -380,18 +444,24 @@ impl SyncManager {
         let mut lan_addresses: Vec<std::net::IpAddr> = if_addrs::get_if_addrs()
             .unwrap_or_default()
             .into_iter()
-            .map(|interface| interface.ip())
-            .filter(|address| address.is_ipv4() && !address.is_loopback() && !address.is_unspecified())
+            .filter_map(|interface| {
+                let address = interface.ip();
+                (is_discovery_interface_allowed(&interface.name, address, interface.is_p2p())
+                    && is_discovery_advertised_address_allowed(address))
+                .then_some(address)
+            })
             .collect();
         // Some directly launched macOS app binaries see only loopback through
         // getifaddrs. A UDP route lookup does not send traffic and reliably
         // reveals the primary interface address in that environment.
-        if let Ok(route_probe) = std::net::UdpSocket::bind("0.0.0.0:0") {
-            if route_probe.connect("192.0.2.1:9").is_ok() {
-                if let Ok(local) = route_probe.local_addr() {
-                    let address = local.ip();
-                    if address.is_ipv4() && !address.is_loopback() && !address.is_unspecified() {
-                        lan_addresses.push(address);
+        if lan_addresses.is_empty() {
+            if let Ok(route_probe) = std::net::UdpSocket::bind("0.0.0.0:0") {
+                if route_probe.connect("192.0.2.1:9").is_ok() {
+                    if let Ok(local) = route_probe.local_addr() {
+                        let address = local.ip();
+                        if is_discovery_advertised_address_allowed(address) {
+                            lan_addresses.push(address);
+                        }
                     }
                 }
             }
@@ -399,7 +469,9 @@ impl SyncManager {
         lan_addresses.sort_unstable();
         lan_addresses.dedup();
         if lan_addresses.is_empty() {
-            log::warn!("sync: no usable LAN address found; keeping discovery alive without advertising");
+            log::warn!(
+                "sync: no usable LAN address found; keeping discovery alive without advertising"
+            );
         } else {
             log::info!("sync: advertising {host} on {lan_addresses:?}");
             let service = ServiceInfo::new(
@@ -430,7 +502,9 @@ impl SyncManager {
                     }
                     ServiceEvent::ServiceRemoved(_, fullname) => {
                         let instance_name = fullname.split('.').next().unwrap_or("");
-                        let instance = instance_name.strip_prefix("verenu-").unwrap_or(instance_name);
+                        let instance = instance_name
+                            .strip_prefix("verenu-")
+                            .unwrap_or(instance_name);
                         let changed = inner
                             .discovered
                             .lock()
@@ -478,7 +552,11 @@ impl SyncManager {
             return Ok(());
         }
 
-        let native_suffix = if cfg!(target_os = "macos") { ".app" } else { ".exe" };
+        let native_suffix = if cfg!(target_os = "macos") {
+            ".app"
+        } else {
+            ".exe"
+        };
         let installed_apps = crate::system::apps::list_installed_apps();
         let platform_tag = crate::data::db::current_platform_tag();
 
@@ -501,7 +579,9 @@ impl SyncManager {
                     resolved = format!("{resolved}#{id}");
                 }
             }
-            let new_platform = (!resolved.starts_with("?::")).then_some(platform_tag).flatten();
+            let new_platform = (!resolved.starts_with("?::"))
+                .then_some(platform_tag)
+                .flatten();
             let updated = conn.execute(
                 "UPDATE context_targets SET executable = ?1, platform = ?2 WHERE id = ?3",
                 rusqlite::params![resolved, new_platform, id],
@@ -515,7 +595,10 @@ impl SyncManager {
                 Err(rusqlite::Error::SqliteFailure(err, _))
                     if err.code == rusqlite::ErrorCode::ConstraintViolation =>
                 {
-                    conn.execute("DELETE FROM context_targets WHERE id = ?1", rusqlite::params![id])?;
+                    conn.execute(
+                        "DELETE FROM context_targets WHERE id = ?1",
+                        rusqlite::params![id],
+                    )?;
                 }
                 Err(err) => return Err(err.into()),
             }
@@ -525,7 +608,9 @@ impl SyncManager {
 
     pub fn identity_exchange(&self) -> Result<IdentityExchange> {
         let guard = self.inner.identity.read().expect("identity lock");
-        let identity = guard.as_ref().ok_or_else(|| anyhow!("sync is unavailable"))?;
+        let identity = guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("sync is unavailable"))?;
         Ok(IdentityExchange {
             device_uuid: identity.uuid.clone(),
             device_name: identity.name.clone(),
@@ -575,9 +660,7 @@ impl SyncManager {
         let peers = peers
             .into_iter()
             .map(|peer| {
-                let online = discovered
-                    .iter()
-                    .any(|d| d.uuid == peer.device_uuid);
+                let online = discovered.iter().any(|d| d.uuid == peer.device_uuid);
                 let state = status
                     .as_ref()
                     .and_then(|s| s.get(&peer.device_uuid))
@@ -645,7 +728,11 @@ impl SyncManager {
             if pending.is_some() {
                 return Err(anyhow!("a pairing is already in progress"));
             }
-            generation = self.inner.pairing_generation.fetch_add(1, Ordering::Relaxed) + 1;
+            generation = self
+                .inner
+                .pairing_generation
+                .fetch_add(1, Ordering::Relaxed)
+                + 1;
             *pending = Some(PendingPairing::Outgoing {
                 generation,
                 abort: None,
@@ -670,9 +757,7 @@ impl SyncManager {
                 .await;
             if let Err(err) = result {
                 log::warn!("sync: pairing with {} failed: {err:#}", target.name);
-                manager
-                    .inner
-                    .fail_pairing(generation, format!("{err:#}"));
+                manager.inner.fail_pairing(generation, format!("{err:#}"));
                 manager
                     .inner
                     .app
@@ -692,8 +777,11 @@ impl SyncManager {
         let abort = task.abort_handle();
         {
             let mut pending = self.inner.pending.lock().await;
-            if let Some(PendingPairing::Outgoing { abort: slot, generation: g, .. }) =
-                pending.as_mut()
+            if let Some(PendingPairing::Outgoing {
+                abort: slot,
+                generation: g,
+                ..
+            }) = pending.as_mut()
             {
                 if *g == generation {
                     *slot = Some(abort);
@@ -722,7 +810,8 @@ impl SyncManager {
         let mut tcp = None;
         let mut failures = Vec::new();
         for addr in connection_candidates(&target.addresses, target.port, &target.uuid) {
-            match tokio::time::timeout(CONNECT_TIMEOUT, tokio::net::TcpStream::connect(addr)).await {
+            match tokio::time::timeout(CONNECT_TIMEOUT, tokio::net::TcpStream::connect(addr)).await
+            {
                 Ok(Ok(stream)) => {
                     tcp = Some(stream);
                     break;
@@ -757,7 +846,8 @@ impl SyncManager {
             },
         )
         .await?;
-        self.inner.update_pairing_phase(generation, "waiting_for_code");
+        self.inner
+            .update_pairing_phase(generation, "waiting_for_code");
 
         // The responder replies only after its user approves, so the whole
         // exchange runs under the generous pairing timeout.
@@ -863,13 +953,7 @@ impl SyncManager {
         };
         let result = match tokio::time::timeout(
             PAIRING_TIMEOUT,
-            pairing::responder_exchange(
-                &mut stream,
-                &cipher,
-                responder_msg,
-                &identity,
-                &peer_uuid,
-            ),
+            pairing::responder_exchange(&mut stream, &cipher, responder_msg, &identity, &peer_uuid),
         )
         .await
         {
@@ -915,8 +999,7 @@ impl SyncManager {
         generation: u64,
     ) {
         let mut pending = self.inner.pending.lock().await;
-        if pending.is_none()
-            && self.inner.pairing_generation.load(Ordering::Relaxed) == generation
+        if pending.is_none() && self.inner.pairing_generation.load(Ordering::Relaxed) == generation
         {
             *pending = Some(PendingPairing::Incoming {
                 peer_uuid: peer_uuid.clone(),
@@ -990,7 +1073,9 @@ impl SyncManager {
 
     pub async fn cancel_pairing(&self) -> Result<()> {
         let mut guard = self.inner.pending.lock().await;
-        self.inner.pairing_generation.fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .pairing_generation
+            .fetch_add(1, Ordering::Relaxed);
         if let Some(PendingPairing::Outgoing {
             abort: Some(abort_handle),
             ..
@@ -1069,7 +1154,13 @@ impl SyncManager {
         .await
         .map_err(|_| anyhow!("tls timeout"))??;
         let my_uuid = self.device_info().uuid;
-        send_message(&mut tls, &Message::Unpair { device_uuid: my_uuid }).await?;
+        send_message(
+            &mut tls,
+            &Message::Unpair {
+                device_uuid: my_uuid,
+            },
+        )
+        .await?;
         Ok(())
     }
 
@@ -1160,6 +1251,11 @@ impl SyncManager {
                 Ok(map) => map.values().cloned().collect::<Vec<_>>(),
                 Err(_) => return,
             };
+            // No possible targets: avoid opening/querying the peer database
+            // every five seconds on machines with no discovered devices.
+            if discovered.is_empty() {
+                return;
+            }
             let paired = paired_set(conn_peers(&self.inner.db));
             let backoff = match self.inner.backoff.lock() {
                 Ok(b) => b,
@@ -1206,8 +1302,7 @@ impl SyncManager {
         }
         let Ok(peer) = (|| {
             let conn = self.lock_db()?;
-            sync_store::get_peer(&conn, peer_uuid)?
-                .ok_or_else(|| anyhow!("not paired"))
+            sync_store::get_peer(&conn, peer_uuid)?.ok_or_else(|| anyhow!("not paired"))
         })() else {
             return;
         };
@@ -1520,7 +1615,9 @@ fn handle_resolved(inner: &Arc<Inner>, info: mdns_sd::ResolvedService) {
         .map(str::to_string)
         .or_else(|| {
             let instance_name = info.get_fullname().split('.').next().unwrap_or("");
-            let instance = instance_name.strip_prefix("verenu-").unwrap_or(instance_name);
+            let instance = instance_name
+                .strip_prefix("verenu-")
+                .unwrap_or(instance_name);
             (!instance.is_empty()).then(|| instance.to_string())
         });
     let Some(uuid) = uuid else { return };
@@ -1747,7 +1844,9 @@ async fn handle_sync_hello(
     // device whose pinned fingerprint matches the presented certificate.
     let peer = (|| {
         let conn = inner.db.lock().ok()?;
-        sync_store::get_peer(&conn, &hello.device_uuid).ok().flatten()
+        sync_store::get_peer(&conn, &hello.device_uuid)
+            .ok()
+            .flatten()
     })();
     let Some(peer) = peer else {
         let _ = send_message(
@@ -1957,10 +2056,15 @@ impl SyncHost for ManagerHost {
             developer,
             &self.installed_apps,
         )
-        .map(|app| (app.exe.clone(), Some(app.name.clone()), app.developer.clone()))
+        .map(|app| {
+            (
+                app.exe.clone(),
+                Some(app.name.clone()),
+                app.developer.clone(),
+            )
+        })
     }
 }
-
 
 pub(crate) fn closest_installed_app<'a>(
     source: &str,
@@ -1968,4 +2072,3 @@ pub(crate) fn closest_installed_app<'a>(
 ) -> Option<&'a crate::system::apps::InstalledApp> {
     crate::system::apps::closest_installed_app(source, None, None, apps)
 }
-

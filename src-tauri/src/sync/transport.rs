@@ -12,9 +12,7 @@
 use anyhow::{anyhow, Result};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider};
-use rustls::pki_types::{
-    CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime,
-};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::{ClientConfig, DigitallySignedStruct, ServerConfig, SignatureScheme};
 use std::sync::Arc;
@@ -142,16 +140,16 @@ pub fn crypto_provider() -> CryptoProvider {
     rustls::crypto::ring::default_provider()
 }
 
-pub fn server_config(cert: CertificateDer<'static>, key: PrivatePkcs8KeyDer<'static>) -> Result<Arc<ServerConfig>> {
+pub fn server_config(
+    cert: CertificateDer<'static>,
+    key: PrivatePkcs8KeyDer<'static>,
+) -> Result<Arc<ServerConfig>> {
     let provider = crypto_provider();
     let config = ServerConfig::builder_with_provider(provider.clone().into())
         .with_safe_default_protocol_versions()
         .map_err(|e| anyhow!("tls protocol setup failed: {e}"))?
         .with_client_cert_verifier(AcceptAnyClient::new(provider))
-        .with_single_cert(
-            vec![cert],
-            PrivateKeyDer::Pkcs8(key),
-        )
+        .with_single_cert(vec![cert], PrivateKeyDer::Pkcs8(key))
         .map_err(|e| anyhow!("tls server certificate rejected: {e}"))?;
     Ok(Arc::new(config))
 }

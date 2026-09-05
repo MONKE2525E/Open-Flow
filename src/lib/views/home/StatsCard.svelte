@@ -38,9 +38,9 @@
   .stat-line:last-child { border-bottom: 0; padding-bottom: 0; }
 
   .stat-num {
-    font-family: var(--serif);
-    font-size: 24px;
-    font-weight: 500;
+    font-family: var(--sans);
+    font-size: 22px;
+    font-weight: 600;
     letter-spacing: -0.02em;
     line-height: 1;
     color: var(--ink);

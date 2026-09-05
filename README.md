@@ -5,7 +5,7 @@
 <p align="center">
   Hold the hotkey, talk, release, and Verenu drops cleaned-up text into the app you were already using.
   <br/>
-  <em>Local-first AI dictation for Windows and macOS. Bring your own API keys. No subscriptions. No telemetry.</em>
+  <em>Local-first AI dictation for Windows and macOS. Bring your own cloud API keys when needed. No subscriptions. No telemetry.</em>
 </p>
 
 <p align="center">
@@ -32,6 +32,8 @@ Contexts are the main place to configure app-specific behavior. They connect app
 
 For more details: [Contexts](docs/CONTEXTS.md), [Vocabulary](docs/VOCABULARY.md), [Snippets](docs/SNIPPETS.md), [Cleanup Levels](docs/CLEANUP_LEVELS.md), and [Local Transcription](docs/LOCAL_TRANSCRIPTION.md).
 
+Appearance can follow the operating system or stay in light or dark mode. Page surfaces use neutral near-white and charcoal colors, and the accent can be changed independently to any six-digit hex color. See [Appearance and settings](docs/APPEARANCE.md).
+
 ## Platform Support
 
 Verenu supports both Windows and macOS.
@@ -46,12 +48,12 @@ Verenu supports both Windows and macOS.
 ### macOS
 
 - Apple Silicon and Intel builds are supported
-- Default hold-to-record hotkey: <kbd>Fn</kbd> + <kbd>Control</kbd>
+- Default hold-to-record hotkey: <kbd>Option</kbd> + <kbd>Space</kbd>
 - API keys are stored in Keychain
 - Verenu needs macOS permissions for real-world use:
   - Microphone, to capture audio
   - Accessibility, to inject text and interact with focused apps
-  - Input Monitoring, to detect the global hotkey while other apps are focused
+  - Notifications are optional and only affect status and update alerts
 
 macOS support is not an afterthought anymore. It is part of the normal app flow, and the repo includes macOS-specific hotkey, permissions, injection, updater, and key-storage logic.
 
@@ -82,7 +84,7 @@ Verenu's own server (`api.verenu.com`) serves only public app metadata — relea
 
 ### Leaves your device
 
-- Local transcription plus Cleanup Off keeps both audio and transcript on device after the model download
+- Local transcription plus local cleanup, or Cleanup Off, keeps audio and transcript on device after the model download
 - Local transcription plus cloud cleanup keeps audio on device but sends transcript text to the cleanup provider
 - Cloud transcription sends recorded audio to your chosen transcription provider
 - Context instructions, cleanup settings, and selected model metadata go with cleanup requests
@@ -98,10 +100,11 @@ You choose the providers. Verenu does not lock you into one stack.
 
 | Provider | Transcription | Cleanup |
 | --- | --- | --- |
-| Local | `parakeet-v3` | none |
+| Local | On-device models | On-device models or none |
 | Groq | `whisper-large-v3-turbo` | `qwen/qwen3.6-27b` |
 | OpenAI | `gpt-4o-transcribe` | `gpt-4o-mini` |
-| Google | `gemini-3.5-flash` | `gemini-3.5-flash` |
+| Google | `gemini-3.5-transcribe` | `gemini-3.5-flash-lite` |
+| AssemblyAI | `universal-3-5-pro` or `universal-2` | not available |
 
 If you care about privacy, speed, retention, or cost, judge the provider on its own policy. Once data leaves Verenu and hits a provider API, that provider's rules apply. Local transcription with cloud cleanup is still not fully local because the transcript text leaves the device.
 
@@ -145,14 +148,15 @@ For more details: [Install Verenu](docs/INSTALL.md), [Contributing](docs/CONTRIB
 
 ## Release Flow
 
-Most day-to-day work lands on `dev` first.
+`master` is the only shared integration and release branch.
 
 The normal flow is:
 
-1. Commit to `dev` for most changes.
-2. Review and test on `dev`.
-3. Merge `dev` into `master` when it is ready.
-4. Cut and ship the release from there.
+1. Create a short-lived feature or fix branch from `master`.
+2. Open a pull request directly into `master`.
+3. Let the required CI checks run, review the change, and merge it into `master`.
+4. The morning nightly workflow reads `master`; run the manual installer
+   workflow from `master` when a production build is needed.
 
 If you are contributing, read [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) before you start.
 

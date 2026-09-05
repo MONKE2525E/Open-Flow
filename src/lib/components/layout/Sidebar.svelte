@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '../../tauri';
+  import { startPolling } from '../../polling';
   import { appStore } from '../../stores';
   import { icons } from '../../icons';
   import { isMac, isWindows } from '../../platform';
@@ -34,7 +35,7 @@
   } from '../../downloadManager.svelte';
   import { tweened } from 'svelte/motion';
   import { cubicOut, expoOut } from 'svelte/easing';
-  import { fly, slide } from 'svelte/transition';
+  import { fade, fly, slide } from 'svelte/transition';
   import { flip } from 'svelte/animate';
 
   let rawMemoryMb = $state(0);
@@ -42,21 +43,19 @@
   let memoryMb = tweened(0, { duration: motionMs(800), easing: expoOut });
 
   onMount(() => {
+    let active = true;
     const refresh = async () => {
       try {
         const next = await invoke<number>('get_memory_mb');
-        if (next !== rawMemoryMb) {
+        if (active && next !== rawMemoryMb) {
           memoryDir = next > rawMemoryMb ? 1 : -1;
           rawMemoryMb = next;
           memoryMb.set(next);
         }
       } catch { /* dev mode */ }
     };
-    refresh();
-    // A footer diagnostic, not live telemetry: 5s keeps the number honest
-    // while halving the IPC + tween churn of the old 2s cadence.
-    const id = setInterval(refresh, 5000);
-    return () => clearInterval(id);
+    const poll = startPolling(refresh, 5000);
+    return () => { active = false; poll.stop(); };
   });
 
   const HOME_NAV_ITEMS = [
@@ -157,6 +156,26 @@
 
   function railDelay(index: number, base: number, step = RAIL_STAGGER_MS): number {
     return motionMs(base + Math.min(index, RAIL_STAGGER_CAP) * step);
+  }
+
+  /* Search results can change both position and height as a broad query is
+     refined. Standard FLIP scales between those rectangles, which stretches
+     text when a whole section loses several matches at once. Search only needs
+     translation: rows glide to their new slot without being resized. */
+  function searchResultReorder(
+    _node: Element,
+    { from, to }: { from: DOMRect; to: DOMRect },
+  ) {
+    const dx = from.left - to.left;
+    const dy = from.top - to.top;
+    return {
+      duration: motionMs(180),
+      easing: cubicOut,
+      css: (t: number) => {
+        const u = 1 - t;
+        return `transform: translate3d(${u * dx}px, ${u * dy}px, 0);`;
+      },
+    };
   }
 
   function nav(id: string) {
@@ -478,7 +497,7 @@
     ></div>
 
     {#if appStore.settingsOpen}
-      <div class="settings-rail-content">
+      <div class="settings-rail-content" class:searching={Boolean(settingsQuery.trim())}>
         <div
           class="settings-search"
           in:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_IN_MS), delay: 0, easing: cubicOut }}
@@ -487,19 +506,37 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
           <input type="search" bind:value={settingsQuery} placeholder="Search settings..." aria-label="Search settings" />
           {#if settingsQuery}
-            <button type="button" class="settings-search-clear" aria-label="Clear settings search" onclick={() => settingsQuery = ''}>×</button>
+            <button
+              type="button"
+              class="settings-search-clear"
+              aria-label="Clear settings search"
+              onclick={() => settingsQuery = ''}
+              in:fly={{ x: motionPx(3), duration: motionMs(MOTION_MS.fast), easing: cubicOut }}
+              out:fly={{ x: motionPx(3), duration: motionMs(120), easing: cubicOut }}
+            >×</button>
           {/if}
         </div>
         {#if settingsQuery.trim()}
-          <div class="settings-search-results scroll-styled" aria-live="polite">
+          <div
+            class="settings-search-results scroll-styled"
+            aria-live="polite"
+          >
             {#each settingsSearchGroups as group (group.section.id)}
-              <div class="settings-search-group">
+              <div
+                class="settings-search-group"
+                animate:searchResultReorder
+                in:fade={{ duration: motionMs(120) }}
+                out:fade={{ duration: motionMs(120) }}
+              >
                 <div class="settings-search-section">{group.section.label}</div>
                 {#each group.results as result (result.id)}
                   <button
                     type="button"
                     class="settings-search-result"
                     onclick={() => openSettingsSearchResult(result)}
+                    animate:searchResultReorder
+                    in:fade={{ duration: motionMs(120) }}
+                    out:fade={{ duration: motionMs(120) }}
                   >
                     <span class="settings-search-result-title">{result.label}</span>
                     <span class="settings-search-result-hint">Open in {group.section.label}</span>
@@ -908,6 +945,14 @@
     min-width: 0;
   }
 
+  /* The section rows have global rail outros for the settings-page morph. Hide
+     their retained outro nodes while search owns this space so results never
+     paint on top of the old navigation list. */
+  .settings-rail-content.searching .rail-list-settings {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
   .settings-search {
     align-items: center;
     display: flex;
@@ -918,10 +963,14 @@
     border: 1px solid var(--line);
     border-radius: 7px;
     color: var(--ink-faint);
+    transition:
+      border-color var(--ui-duration-fast) var(--ui-ease-out),
+      color var(--ui-duration-fast) var(--ui-ease-out);
   }
 
   .settings-search:focus-within {
     border-color: var(--line-strong);
+    color: var(--ink-mute);
   }
 
   .settings-search input {
@@ -952,7 +1001,13 @@
     font-size: 16px;
     line-height: 1;
     padding: 0 1px;
+    transition:
+      color var(--ui-duration-fast) var(--ui-ease-out),
+      transform var(--ui-duration-fast) var(--ui-ease-out);
   }
+
+  .settings-search-clear:hover { color: var(--ink); }
+  .settings-search-clear:active { transform: scale(0.9); }
 
   .settings-search-empty {
     color: var(--ink-mute);
@@ -961,12 +1016,32 @@
   }
 
   .settings-search-results {
+    animation: settings-search-results-enter var(--ui-duration-base) var(--ui-ease-out);
     display: flex;
     flex-direction: column;
     gap: 12px;
+    left: 0;
     max-height: calc(100vh - 190px);
     overflow-y: auto;
     padding: 0 2px 8px;
+    position: absolute;
+    right: 0;
+    top: 40px;
+  }
+
+  @keyframes settings-search-results-enter {
+    from {
+      opacity: 0;
+      transform: translate3d(-6px, 0, 0);
+    }
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .settings-search-results { animation: none; }
   }
 
   .settings-search-group {
@@ -994,6 +1069,9 @@
     gap: 1px;
     padding: 7px 8px;
     text-align: left;
+    transition:
+      background-color var(--ui-duration-fast) var(--ui-ease-out),
+      color var(--ui-duration-fast) var(--ui-ease-out);
   }
 
   .settings-search-result:hover { background: var(--control-hover); }

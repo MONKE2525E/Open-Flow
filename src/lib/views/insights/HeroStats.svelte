@@ -3,7 +3,15 @@
   import { tweened } from 'svelte/motion';
   import { expoOut } from 'svelte/easing';
   import { motionMs } from '../../motion';
-  import { fmtCompact, fmtNumber, bookEquivalent, pctDelta } from './helpers';
+  import {
+    fmtCompact,
+    fmtNumber,
+    bookEquivalent,
+    pctDelta,
+    paceScale,
+    paceTickOffset,
+    PACE_TICKS,
+  } from './helpers';
   import AnimatedNumber from './AnimatedNumber.svelte';
   import type { InsightsPayload } from './types';
 
@@ -14,14 +22,20 @@
   // the page is filtered. Say so rather than letting them read as scoped.
   const scoped = $derived(data.context_id !== null);
 
-  /* Gauge spans 0–200 wpm. The average speaking pace (~100 wpm) sits dead
-     centre, so most readings land mid-arc with room on both sides for
-     unusually slow or fast talkers. */
-  const GAUGE_MAX = 200;
-  const GAUGE_MID = 100;
-  const ARC_LENGTH = Math.PI * 52; // r=52 semicircle
+  /* The pace meter is a ruler, not a dial: same flat, hairline vocabulary as
+     the bars elsewhere on this page, and it leaves the tile left-aligned on
+     the same baseline grid as its two neighbours.
 
-  // Tweened so the arc — and everything derived from it — glides to a new
+     Scale runs 0 → a round ceiling that always clears the personal best, so
+     the best marker never pins itself to the last tick and read as "maxed". */
+  const TICKS = PACE_TICKS;
+  const tickIndices = Array.from({ length: TICKS }, (_, i) => i);
+  // Measured so ticks can be pinned to whole pixels; see paceTickOffset().
+  let rulerW = $state(0);
+  const scale = $derived(paceScale(data.totals.best_wpm));
+  const scaleMax = $derived(scale.max);
+
+  // Tweened so the meter — and everything derived from it — glides to a new
   // reading instead of snapping when a fresh dictation lands.
   const wpmT = tweened(untrack(() => data.totals.avg_wpm), { duration: motionMs(650), easing: expoOut });
   $effect(() => { wpmT.set(data.totals.avg_wpm); });
@@ -30,7 +44,9 @@
   $effect(() => { totalWordsT.set(data.totals.total_words); });
 
   const wpm = $derived(Math.round($wpmT));
-  const gaugeFill = $derived(Math.min(1, Math.max(0, wpm / GAUGE_MAX)));
+  // Lit tick count, so the meter fills in discrete steps as the tween runs.
+  const litTicks = $derived(Math.round(Math.min(1, Math.max(0, $wpmT / scaleMax)) * TICKS));
+  const bestTick = $derived(scale.bestTick);
 
   const words = $derived(fmtCompact($totalWordsT));
   // Derived from the tweened count so the book equivalent stays in sync with
@@ -45,40 +61,38 @@
 </script>
 
 <div class="hero">
-  <section class="tile tile-gauge" aria-label="Average words per minute">
-    <svg class="gauge" viewBox="-10 -12 148 98" aria-hidden="true">
-      <path
-        d="M 12 70 A 52 52 0 0 1 116 70"
-        fill="none"
-        stroke="var(--control-hover)"
-        stroke-width="11"
-        stroke-linecap="round"
-      />
-      <path
-        d="M 12 70 A 52 52 0 0 1 116 70"
-        fill="none"
-        stroke="var(--accent)"
-        stroke-width="11"
-        stroke-linecap="round"
-        stroke-dasharray={`${ARC_LENGTH * gaugeFill} ${ARC_LENGTH}`}
-        class="gauge-fill"
-      />
-      <!-- Scale labels — 0 / 100 / 200 wpm — so the arc reads as a fixed
-           reference, not a bare unlabelled sweep. Each centred on its own
-           mark so "0" and "200" sit at identical, mirrored distances from
-           the arc's two ends. -->
-      <text x="4" y="86" class="gauge-tick" text-anchor="middle">0</text>
-      <text x="64" y="0" class="gauge-tick gauge-tick-mid" text-anchor="middle">{GAUGE_MID}</text>
-      <text x="124" y="86" class="gauge-tick" text-anchor="middle">{GAUGE_MAX}</text>
-      <!-- Sits low in the arc's hollow, where the semicircle is widest, so
-           a 3-digit reading never reaches the curve above it. No "wpm"
-           suffix — the label right below already says it. -->
-      <text x="64" y="63" class="gauge-value" text-anchor="middle">{wpm > 0 ? wpm : '—'}</text>
-    </svg>
-    <p class="tile-label">words per minute</p>
-    <p class="tile-note">
+  <section
+    class="tile tile-pace"
+    aria-label={wpm > 0
+      ? `Average speaking pace ${wpm} words per minute, best ${Math.round(data.totals.best_wpm)}`
+      : 'Average speaking pace, not measured yet'}
+  >
+    <div class="tile-head">
+      <span class="big">{wpm > 0 ? wpm : '—'}<small class="unit">wpm</small></span>
+    </div>
+    <p class="tile-label">average speaking pace</p>
+
+    <div class="meter" aria-hidden="true">
+      <div class="ruler" bind:clientWidth={rulerW}>
+        {#each tickIndices as i}
+          <span
+            class="tick"
+            class:major={i % 11 === 0}
+            class:on={i < litTicks}
+            class:best={i === bestTick}
+            style="left: {paceTickOffset(i, rulerW)}"
+          ></span>
+        {/each}
+      </div>
+      <div class="scale">
+        <span>0</span>
+        <span>{scaleMax}</span>
+      </div>
+    </div>
+
+    <p class="tile-note tile-note-dim">
       {#if data.totals.best_wpm > 0}
-        Your best is {Math.round(data.totals.best_wpm)} wpm
+        <span class="best-key" aria-hidden="true"></span>Best <strong>{Math.round(data.totals.best_wpm)}</strong> wpm
       {:else}
         Speak a little longer to measure this
       {/if}
@@ -178,9 +192,9 @@
   }
 
   .big {
-    font-family: var(--serif);
-    font-size: 34px;
-    font-weight: 500;
+    font-family: var(--sans);
+    font-size: 28px;
+    font-weight: 600;
     letter-spacing: -0.03em;
     line-height: 1;
     color: var(--ink);
@@ -220,8 +234,8 @@
   .tile-label {
     margin: 9px 0 0;
     font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     color: var(--ink-mute);
   }
 
@@ -238,38 +252,77 @@
     font-size: 11.5px;
   }
 
-  .tile-gauge {
-    align-items: center;
-    text-align: center;
+  .big .unit {
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+    margin-left: 5px;
   }
 
-  .tile-gauge .tile-label {
-    margin-top: 13px;
+  /* Ruler, not a bar: discrete hairline ticks read as an instrument scale and
+     match the bar language used by the charts below. */
+  .meter { margin-top: 14px; }
+
+  .ruler {
+    position: relative;
+    height: 18px;
   }
 
-  .gauge {
-    width: 100%;
-    max-width: min(150px, 100%);
-    height: auto;
-    display: block;
+  /* Fixed hairline width — flex-grown ticks turn into fat blocks and the whole
+     thing reads as a loading bar instead of a scale. Absolutely positioned at
+     whole-pixel offsets rather than spaced by flexbox, so no tick straddles a
+     pixel boundary and renders heavier than the rest. */
+  .tick {
+    position: absolute;
+    bottom: 0;
+    width: 2px;
+    height: 10px;
+    border-radius: 1px;
+    background: var(--line-strong);
+    transition:
+      background-color var(--ui-duration-base, 200ms) ease,
+      height var(--ui-duration-base, 200ms) ease;
   }
-  .gauge-tick {
-    font-family: var(--serif);
+  /* Quarter marks, so the scale can be read without counting hairlines. The
+     last tick is deliberately not one — the "250" label already ends the
+     scale, and a tall mark there competes with the personal-best marker. */
+  .tick.major { height: 14px; }
+  .tick.on { background: var(--accent); }
+  /* The best marker outranks the fill — it must stay findable inside the lit
+     run, which is where it usually sits. */
+  .tick.best {
+    height: 18px;
+    background: var(--ink-soft);
+  }
+
+  .scale {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 7px;
+    font-family: var(--sans);
     font-size: 10px;
-    font-weight: 600;
-    fill: var(--ink-mute);
+    font-weight: 500;
+    color: var(--ink-faint);
     font-variant-numeric: tabular-nums;
   }
-  .gauge-tick-mid {
-    font-size: 11px;
-    fill: var(--ink-soft);
+
+  /* Ties the tall tick to the words underneath it without a floating label
+     that would overflow the column. */
+  .best-key {
+    display: inline-block;
+    width: 2px;
+    height: 10px;
+    border-radius: 1px;
+    background: var(--ink-soft);
+    margin-right: 7px;
+    vertical-align: -1px;
   }
 
-  .gauge-value {
-    font-family: var(--serif);
-    font-size: 27px;
-    font-weight: 500;
-    fill: var(--ink);
+  .tile-pace .tile-note-dim strong {
+    color: var(--ink-soft);
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
 
@@ -289,9 +342,9 @@
   }
 
   .stat-num {
-    font-family: var(--serif);
-    font-size: 17px;
-    font-weight: 500;
+    font-family: var(--sans);
+    font-size: 16px;
+    font-weight: 600;
     line-height: 1;
     color: var(--ink);
     font-variant-numeric: tabular-nums;
@@ -305,19 +358,21 @@
 
   /* Container queries against the insights column (owned by Insights.svelte):
      viewport queries fired too late because the sidebar consumes ~220px.
-     The band stays 3-up as long as possible — stacking early is what left a
-     150px gauge stranded in a full-width row with empty space beside it. */
+     The band stays 3-up as long as possible — stacking early strands one
+     narrow tile in a full-width row with empty space beside it. */
   @container insights (max-width: 680px) {
-    /* Compact 3-up: tighter gutters and a smaller gauge/number so all three
-       tiles still fit side by side instead of stacking. */
+    /* Compact 3-up: tighter gutters and smaller numbers so all three tiles
+       still fit side by side instead of stacking. */
     .hero { gap: 14px; }
     .tile + .tile { padding-left: 14px; }
     .tile-relative .tile-head { padding-right: 84px; }
     .delta { font-size: 10px; padding: 2px 7px; }
     .big { font-size: 24px; }
     .big small { font-size: 15px; }
-    .gauge { max-width: min(120px, 100%); }
-    .gauge-value { font-size: 20px; }
+    .big .unit { font-size: 11px; margin-left: 4px; }
+    .ruler { height: 16px; }
+    .tick { height: 9px; }
+    .tick.best { height: 16px; }
     .tile-note { font-size: 11.5px; }
     .stat-num { font-size: 14px; }
     .stat-label { font-size: 10.5px; }
@@ -334,22 +389,6 @@
       padding-top: 18px;
       margin-top: 18px;
     }
-    /* Stacked, the gauge goes horizontal — dial on the left, labels on the
-       right — so the row reads as one full-width fact instead of a small
-       centred dial with empty space beside it. */
-    .tile-gauge {
-      display: grid;
-      grid-template-columns: 110px minmax(0, 1fr);
-      column-gap: 14px;
-      align-items: center;
-      text-align: left;
-    }
-    .tile-gauge .gauge {
-      grid-row: span 2;
-      max-width: 110px;
-    }
-    .tile-gauge .tile-label { margin-top: 0; }
-    .tile-gauge .tile-note { margin-top: 4px; }
   }
 
   /* Very narrow: the delta pill joins the flow instead of floating over the

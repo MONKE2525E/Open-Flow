@@ -408,9 +408,11 @@ mod mac {
     /// load. Resizing here, before caching or returning, is the fix.
     pub fn extract_icon_png(bundle_path: &str) -> Option<Vec<u8>> {
         let raw = extract_icon_png_native(bundle_path)?;
-        let resized = image::load_from_memory(&raw)
-            .ok()?
-            .resize(128, 128, image::imageops::FilterType::Lanczos3);
+        let resized = image::load_from_memory(&raw).ok()?.resize(
+            128,
+            128,
+            image::imageops::FilterType::Lanczos3,
+        );
         let mut png = Vec::new();
         resized
             .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)

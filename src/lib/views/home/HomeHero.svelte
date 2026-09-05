@@ -21,7 +21,7 @@
     border-radius: var(--r-lg);
     overflow: hidden;
     margin-bottom: 16px;
-    height: clamp(112px, 14vw, 160px);
+    height: clamp(104px, 12vw, 136px);
     background: var(--arm-950);
   }
 
@@ -65,13 +65,13 @@
   }
 
   .hero-em {
-    font-family: var(--serif);
+    font-family: var(--sans);
     font-style: italic;
     color: color-mix(in srgb, var(--pill-fg) 82%, transparent);
   }
 
   @media (max-width: 720px) {
     .hero-photo-content { padding: 18px 20px; }
-    .hero-photo-title { font-size: 20px; }
+    .hero-photo-title { font-size: 18px; }
   }
 </style>

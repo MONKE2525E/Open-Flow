@@ -293,7 +293,6 @@ pub fn history_retention_days(value: &str) -> Option<i64> {
     }
 }
 
-
 mod config;
 #[cfg(test)]
 mod tests;
@@ -325,4 +324,3 @@ pub fn migrate_contextual_formatting(settings: &SettingsHandle) -> Result<(), St
     settings.set(CONTEXTUAL_FORMATTING, Value::Bool(merged))?;
     settings.save()
 }
-

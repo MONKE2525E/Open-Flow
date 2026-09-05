@@ -4,27 +4,48 @@ Verenu is a Tauri desktop app for Windows and macOS. Keep changes focused, light
 
 ## Branch Flow
 
-This repo is not trying to force everything through a heavyweight PR loop.
+`master` is the only shared integration and release branch. All changes go
+through a pull request directly into `master`; there is no separate `dev`
+integration branch.
 
 The default workflow is:
 
-1. Most changes go straight onto `dev`.
-2. `dev` gets reviewed and tested.
-3. Once `dev` is in good shape, it is merged into `master`.
-4. Releases are cut from that stabilized path.
+1. Create a short-lived feature or fix branch from `master`.
+2. Make the change and run the smallest useful local checks.
+3. Open a pull request targeting `master`.
+4. Address review feedback and CI failures, then merge once the checks pass.
 
-If you have direct write access and the change is normal project work, commit to `dev`.
+Direct pushes to `master` should be reserved for repository administration or
+urgent recovery. Normal project work belongs in a PR, including work that
+changes release flow, privacy boundaries, provider behavior, core dictation
+behavior, or updater behavior.
 
-Use a PR when one of these is true:
+## Pull Requests
 
-- You do not have write access
-- The change is risky, broad, or hard to review in a direct push
-- You want line-by-line discussion before it lands
-- The work changes release flow, privacy boundaries, provider behavior, core dictation behavior, or updater behavior
+Normal changes use one pull request directly into `master`.
+
+- Start the branch from `master`.
+- Set the pull request base to `master`.
+- Wait for PR Checks and Dependency Review to pass.
+- Address review feedback and CI failures before merging.
+- Do not open an intermediate pull request into `dev`.
+
+For GitButler workspaces, verify the target before creating a pull request:
+
+```powershell
+but config target
+```
+
+It should report `origin/master`. If no branches are applied, set the target
+and push remote with:
+
+```powershell
+but config target origin/master --push-remote origin
+```
 
 ## Before You Start
 
-- Read [`../CLAUDE.md`](../CLAUDE.md) for repo architecture, platform gotchas, and testing notes.
+- Read [`../AGENTS.md`](../AGENTS.md) for repo architecture, platform gotchas, and testing notes.
 - Read [ARCHITECTURE.md](ARCHITECTURE.md) for the public architecture map.
 - Read [TESTING.md](TESTING.md) for the full test matrix.
 - Check [ROADMAP.md](ROADMAP.md) for current bugs and long-term context.
@@ -71,8 +92,9 @@ npm run dev
 
 ### macOS
 
-- Default hold-to-record hotkey is <kbd>Fn</kbd> + <kbd>Control</kbd>.
+- Default hold-to-record hotkey is <kbd>Option</kbd> + <kbd>Space</kbd>.
 - API keys live in Keychain.
+- The global hotkey needs no Input Monitoring permission. Accessibility is used for focused-text reads and text injection.
 - Real macOS testing matters because permissions are part of the feature, not an edge case.
 - Changes that touch hotkeys, injection, onboarding, setup, or key storage should be checked on macOS if they can possibly affect it.
 
@@ -80,7 +102,7 @@ npm run dev
 
 - Keep Tauri. Do not replace the app shell with Electron.
 - Keep API keys out of SQLite, logs, screenshots, fixtures, and test output.
-- Use constants from [`../src-tauri/src/data/store.rs`](../src-tauri/src/data/store.rs) for store keys. Do not add raw string keys.
+- Use constants from [`../src-tauri/src/data/store/mod.rs`](../src-tauri/src/data/store/mod.rs) for store keys. Do not add raw string keys.
 - Keep [`../tests/smoke/`](../tests/smoke/) as a contract. Fix app code when smoke tests fail.
 - Keep dependencies lean. The app has a low idle RAM target.
 - Follow existing Rust, Svelte, TypeScript, and Tailwind patterns before inventing new abstractions.
@@ -158,7 +180,8 @@ Whether work lands by direct commit or PR, the bar is the same:
 - Call out privacy, provider, hotkey, clipboard, updater, database, or platform impacts
 - Say plainly if something was not tested
 
-If you open a PR, target `dev` unless there is a specific reason not to.
+If you open a PR, target `master`. Do not open an intermediate PR into `dev` or
+merge `dev` into `master`.
 
 ## Related Docs
 

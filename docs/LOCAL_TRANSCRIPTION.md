@@ -1,79 +1,65 @@
-# Local Transcription
+# Local transcription and cleanup
 
-Verenu now supports local transcription as a first-class transcription backend.
+Verenu supports on-device transcription and on-device cleanup. Models and the local cleanup runtime are downloaded from Settings -> Models when you choose them.
 
-## Beta Scope
+## How the local path works
 
-This beta ships one clear local path:
+1. Verenu records the audio on your device.
+2. A selected `local/<model>` transcription model receives the captured audio through the local STT adapter.
+3. The local model returns raw transcript text.
+4. With Cleanup Off, Verenu keeps that text as-is. With cleanup enabled, it sends the text to either a downloaded local cleanup model or a cloud cleanup provider.
+5. Verenu pastes the final text and stores the dictation in local history.
 
-- Local transcription with `local/parakeet-v3`
-- Optional cloud cleanup after local transcription
-- `Cleanup: Off` for a no-cleanup path
+Local transcription with local cleanup keeps the dictation data on the device after the model files have been downloaded. Local transcription with cloud cleanup keeps the audio local but sends the transcript and cleanup context to the selected cloud provider.
 
-What this beta does **not** claim:
+## Local transcription models
 
-- It is not "fully local" unless cleanup is also Off
-- It does not include local cleanup LLMs
-- It does not expose Moonshine, Whisper.cpp, or custom local models as the default path
+The built-in local transcription catalog currently includes:
 
-Those advanced models are present behind the advanced local section for follow-up work and compatibility testing.
+- Parakeet V3 and Parakeet V2
+- Moonshine Tiny, Base, Small, and Medium
+- SenseVoice
+- GigaAM V3
+- Canary 180M Flash and Canary 1B V2
+- Cohere
 
-## How It Works
+The model picker shows download state, verifies completed downloads before marking them ready, and allows a downloaded model to be cancelled or removed.
 
-1. Verenu records audio locally.
-2. If transcription is set to `Local/offline`, Verenu sends 16 kHz mono PCM directly to the local STT adapter instead of re-decoding a WAV.
-3. The adapter loads the selected local model from `models/stt/` under the app-data directory.
-4. The local model returns raw transcription text.
-5. Verenu either:
-   - keeps that text as-is when `Cleanup: Off`, or
-   - sends only the transcript text to the selected cloud cleanup provider.
-6. Verenu pastes the final result and stores history locally.
+## Local cleanup models
 
-## Privacy Modes
+The built-in local cleanup catalog currently includes:
 
-### Local transcription + Cleanup Off
+- Gemma 4 E2B and E4B
+- Qwen 2.5 0.5B, 1.5B, 3B, and 7B Instruct
+- Phi-3 Mini 4K Instruct
+- SmolLM2 360M and 1.7B Instruct
+- Granite 3.3 2B and 8B Instruct
 
-After the model download, both audio and transcript stay on the device.
+All local cleanup models share one downloaded runtime. Verenu downloads that runtime once, then manages the individual cleanup model files separately.
 
-### Local transcription + cloud cleanup
+## Storage and downloads
 
-Audio stays on the device.
+- Local transcription models are stored in the app-data `models/stt` directory.
+- Local cleanup models are stored in the app-data `models/cleanup` directory.
+- The local cleanup runtime is stored in the app-data `models/bin` directory.
+- Downloads are verified and installed atomically before a model becomes selectable.
+- Settings -> Models provides download, cancel, and delete actions for local models and the cleanup runtime.
 
-The transcript text, cleanup instructions, and related cleanup context leave the device because the cleanup provider needs them.
+## Fallback behavior
 
-### Cloud transcription
+- A missing selected model produces a download prompt in the model picker.
+- A retryable local transcription failure can move to a configured cloud transcription fallback.
+- A non-retryable local model or configuration error is reported instead of silently switching to the cloud path.
+- Cloud fallback models still require the corresponding provider key.
 
-Recorded audio leaves the device and goes to the selected transcription provider.
+## Platform limits
 
-## Models
+Local model downloads and inference are currently available on Windows and Apple Silicon Macs. Local models are gated off on Intel Macs until that path has been validated on real hardware. Linux is not a supported desktop target.
 
-### Recommended
+Speed, memory use, and output quality depend on the selected model and the computer running it. Larger local cleanup models need more memory and may take longer to answer.
 
-- `local/parakeet-v3`
+## Choosing a private path
 
-### Advanced
+For a fully on-device dictation path, select a local transcription model, select a local cleanup model or turn Cleanup Off, and download the required files. Model downloads and any normal update or service-status requests are separate from dictation processing.
 
-- `local/moonshine-base`
-- `local/whisper-custom`
-
-Advanced models are intentionally de-emphasized in this beta. Parakeet V3 is the supported path that the rest of the UX is built around.
-
-## Downloads and Storage
-
-- Local models are stored in `models/stt/` inside Verenu's app-data directory
-- Downloads use resumable HTTP range requests when the server supports them
-- Partial archives use `.partial`
-- In-progress extraction uses `.extracting`
-- Models are only treated as usable after download verification and atomic install finish
-
-## Failure Behavior
-
-- Missing selected local model: Verenu shows `Download the selected local model.`
-- Retryable local runtime failures can fall back to a configured cloud transcription model
-- Non-retryable local model and configuration failures do not silently fall through to cloud
-
-## Current Limits
-
-- No Linux-specific local support work in this beta
-- No local cleanup model support
-- Local transcription quality, speed, and RAM use still depend heavily on the machine and the selected model
+See [Privacy & Data](PRIVACY_SUMMARY.md) for the short privacy summary and [Data And Privacy](DATA_AND_PRIVACY.md) for the complete data map.

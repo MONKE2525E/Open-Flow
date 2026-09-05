@@ -28,6 +28,7 @@ Stored locally in app storage and SQLite:
 - Transcription history
 - Auto-learn events and candidate data
 - Update-dismiss state
+- A short-lived dictation failover spool (`dictation-failover/` under the app data directory): in-progress audio so a crash or reboot can offer Continue. Deleted after history is saved, on dismiss, or after 24 hours. Not included in backups.
 
 ### Logs
 
@@ -132,9 +133,9 @@ Each hostname is requested at most once: the result is cached on disk under the 
 
 ### Connectivity check
 
-While the app window is open, Verenu periodically sends a lightweight `HEAD` request to `api.github.com` to detect whether you are online and show the offline indicator.
+Verenu first reads the operating system's network state. Windows uses the Network List Manager and macOS checks route reachability. These checks do not send traffic.
 
-That request carries no dictated text, history, snippets, or API keys.
+If a real provider or Verenu service request fails, Verenu can run a short active probe to distinguish a local connection problem from a provider outage. When service checks are enabled, it checks Verenu's health endpoint first, then uses `www.google.com` as an independent second check. This probe is limited to the failure path and carries no dictated text, history, snippets, or API keys.
 
 ### Provider status checks
 
@@ -170,7 +171,7 @@ That said, once data is sent to a third-party AI provider, that provider's reten
 
 | Feature | Stays local | Leaves device |
 | --- | --- | --- |
-| Hold-to-record audio capture | audio before release | nothing until transcription starts |
+| Hold-to-record audio capture | audio before release, plus a local crash-recovery spool until the take is saved, dismissed, or 24 hours old | nothing until transcription starts |
 | Local transcription + Cleanup Off | audio, transcript, settings, and history | nothing after the model download |
 | Local transcription + cloud cleanup | audio, local model, local capture state | transcript text and cleanup context to selected cleanup provider |
 | Cloud transcription | local capture state | audio to selected transcription provider |
@@ -180,7 +181,7 @@ That said, once data is sent to a third-party AI provider, that provider's reten
 | Context website check | current app state stays local | the typed domain, via a plain DNS lookup, when you attach a website to a context group |
 | Auto-learn | local monitoring data and promoted entries | nothing by default |
 | Update check | current app state stays local | GitHub release metadata request |
-| Connectivity check | current app state stays local | periodic `HEAD` request to `api.github.com` |
+| Connectivity check | current app state stays local | native OS network-state check; a short active probe only after a real request fails |
 | Provider status check | current app state stays local | optional periodic GET to `api.verenu.com/v1/provider-status` (every 5 min, plus an immediate recheck after a provider-side pipeline failure) |
 | API health check | current app state stays local | optional periodic GET to `api.verenu.com/v1/health` (every 20 min) |
 | Export data | backup file on local disk | nothing unless you share the file yourself |

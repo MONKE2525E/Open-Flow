@@ -195,8 +195,8 @@
   .figures div { min-width: 0; }
   .figures dt {
     font-size: 10.5px;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     color: var(--ink-mute);
     margin-bottom: 4px;
   }

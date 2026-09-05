@@ -17,7 +17,9 @@
   apps. Anything not granted will stop dictation from working everywhere.
 </p>
 
-<MacPermissions variant="settings" {provider} />
+<div data-setting-target="permissions">
+  <MacPermissions variant="settings" {provider} />
+</div>
 
 <style>
   h2 { margin-bottom: 6px; }
