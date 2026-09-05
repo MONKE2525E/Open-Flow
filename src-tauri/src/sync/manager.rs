@@ -454,12 +454,14 @@ impl SyncManager {
         // Some directly launched macOS app binaries see only loopback through
         // getifaddrs. A UDP route lookup does not send traffic and reliably
         // reveals the primary interface address in that environment.
-        if let Ok(route_probe) = std::net::UdpSocket::bind("0.0.0.0:0") {
-            if route_probe.connect("192.0.2.1:9").is_ok() {
-                if let Ok(local) = route_probe.local_addr() {
-                    let address = local.ip();
-                    if is_discovery_advertised_address_allowed(address) {
-                        lan_addresses.push(address);
+        if lan_addresses.is_empty() {
+            if let Ok(route_probe) = std::net::UdpSocket::bind("0.0.0.0:0") {
+                if route_probe.connect("192.0.2.1:9").is_ok() {
+                    if let Ok(local) = route_probe.local_addr() {
+                        let address = local.ip();
+                        if is_discovery_advertised_address_allowed(address) {
+                            lan_addresses.push(address);
+                        }
                     }
                 }
             }
