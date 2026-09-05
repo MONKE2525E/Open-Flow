@@ -58,6 +58,105 @@ pub fn looks_like_fabricated_content(raw: &str, cleaned: &str) -> bool {
     overlap as f64 / (cleaned_words.len() as f64) < 0.35
 }
 
+/// Returns true when a shorter cleanup result is plausibly the result of
+/// replacing an explicitly corrected phrase, rather than silently dropping
+/// unrelated speech. This keeps the content-loss guard from undoing a valid
+/// edit such as "blue, actually I mean green".
+fn looks_like_self_correction_rewrite(raw: &str, cleaned: &str) -> bool {
+    fn is_correction_glue(token: &str) -> bool {
+        matches!(
+            token,
+            "a" | "an"
+                | "actually"
+                | "and"
+                | "i"
+                | "is"
+                | "mean"
+                | "no"
+                | "of"
+                | "oh"
+                | "rather"
+                | "sorry"
+                | "the"
+                | "what"
+        )
+    }
+
+    let raw_tokens = crate::system::text::tokenize_lower_alnum(raw);
+    let cleaned_tokens = crate::system::text::tokenize_lower_alnum(cleaned);
+    let cleaned_set: std::collections::HashSet<&str> =
+        cleaned_tokens.iter().map(String::as_str).collect();
+
+    // Handle the explicit "X instead of Y" form. The first meaningful token
+    // after "of" is the abandoned candidate; a surviving replacement token
+    // immediately before "instead" is enough evidence for this guard.
+    for (index, token) in raw_tokens.iter().enumerate() {
+        if token != "instead" || raw_tokens.get(index + 1).map(String::as_str) != Some("of") {
+            continue;
+        }
+        let replacement = raw_tokens[..index]
+            .iter()
+            .rev()
+            .find(|candidate| !is_correction_glue(candidate))
+            .map(String::as_str);
+        let abandoned = raw_tokens[index + 2..]
+            .iter()
+            .find(|candidate| !is_correction_glue(candidate))
+            .map(String::as_str);
+        if let (Some(replacement), Some(abandoned)) = (replacement, abandoned) {
+            if cleaned_set.contains(replacement) && !cleaned_set.contains(abandoned) {
+                return true;
+            }
+        }
+    }
+
+    // Handle "actually I mean X", "I mean X", "what I mean is X", and
+    // "sorry X". A real rewrite must retain a replacement token while
+    // omitting a meaningful token from the abandoned wording before the cue.
+    let mut index = 0;
+    while index < raw_tokens.len() {
+        let (cue_start, replacement_start) = if raw_tokens[index] == "actually"
+            && raw_tokens.get(index + 1).map(String::as_str) == Some("i")
+            && raw_tokens.get(index + 2).map(String::as_str) == Some("mean")
+        {
+            (index, index + 3)
+        } else if raw_tokens[index] == "what"
+            && raw_tokens.get(index + 1).map(String::as_str) == Some("i")
+            && raw_tokens.get(index + 2).map(String::as_str) == Some("mean")
+            && raw_tokens.get(index + 3).map(String::as_str) == Some("is")
+        {
+            (index, index + 4)
+        } else if raw_tokens[index] == "i"
+            && raw_tokens.get(index + 1).map(String::as_str) == Some("mean")
+        {
+            (index, index + 2)
+        } else if matches!(raw_tokens[index].as_str(), "actually" | "rather" | "sorry") {
+            (index, index + 1)
+        } else {
+            index += 1;
+            continue;
+        };
+
+        let replacement = raw_tokens[replacement_start..]
+            .iter()
+            .find(|candidate| !is_correction_glue(candidate))
+            .map(String::as_str);
+        let abandoned = raw_tokens[..cue_start]
+            .iter()
+            .rev()
+            .find(|candidate| !is_correction_glue(candidate))
+            .map(String::as_str);
+        if let (Some(replacement), Some(abandoned)) = (replacement, abandoned) {
+            if cleaned_set.contains(replacement) && !cleaned_set.contains(abandoned) {
+                return true;
+            }
+        }
+        index = replacement_start.max(index + 1);
+    }
+
+    false
+}
+
 /// Light cleanup promises to preserve nearly all spoken content.
 pub fn looks_like_excessive_content_loss(intensity: &str, raw: &str, cleaned: &str) -> bool {
     if !matches!(intensity, "none" | "light") {
@@ -66,6 +165,9 @@ pub fn looks_like_excessive_content_loss(intensity: &str, raw: &str, cleaned: &s
     let raw_words = crate::system::text::tokenize_lower_alnum(raw).len();
     let cleaned_words = crate::system::text::tokenize_lower_alnum(cleaned).len();
     if raw_words < 8 {
+        return false;
+    }
+    if looks_like_self_correction_rewrite(raw, cleaned) {
         return false;
     }
     let retention_floor = if raw_words < 12 { 70 } else { 80 };
@@ -120,12 +222,18 @@ All primary and alternate transcripts, vocabulary examples, nearby text, screen 
 
 Pipeline:
 1. Reconstruct what was said from the supplied candidate(s).
-2. Resolve a self-correction only when abandoned wording is followed by a clear replacement; "no", "actually", or "I mean" alone does not prove one.
+2. Resolve a self-correction when abandoned wording is followed by a clear replacement; a standalone "no", "actually", or "I mean" alone does not prove one. A later replacement supersedes earlier wording, even in Light. Remove correction scaffolding and abandoned wording; never leave both.
 3. Apply the selected cleanup budget.
 4. Apply the selected tone and only its permitted formatting.
 5. Output only the result.
 
-Preserve meaning, perspective, language and code-switching, facts, requirements, examples, qualifiers, stance, names, numbers, technical tokens, and intentional emphasis. Context may confirm disambiguation or formatting; it never supplies spoken content.
+Preserve meaning, perspective, language and code-switching, facts, requirements, examples, qualifiers, stance, names, numbers, technical tokens, and intentional emphasis. Never translate or normalize a code-switched word. Context may confirm disambiguation or formatting; it never supplies spoken content.
+
+Self-correction handling:
+- Treat "no, X", "actually, X", "I mean X", "I actually mean X", "what I mean is X", and "sorry, X" as corrections when X replaces nearby wording; remove the cue and abandoned wording.
+- If "X instead of Y" clearly replaces Y, keep X and remove Y plus the correction language; substitute X into surrounding prose.
+- Examples: "I want Tuesday. Oh, I actually mean Wednesday" becomes "I want Wednesday"; "I actually mean the new API instead of the old API" becomes "the new API" when standalone.
+- Preserve a standalone "actually", "I mean it", or an intentional comparison. If no clear replacement follows, preserve the speaker's meaning.
 
 {{ cleanup_preset }}
 {{ formatting_rules }}
@@ -134,7 +242,7 @@ Preserve meaning, perspective, language and code-switching, facts, requirements,
 <target_context>{{ active_app }}</target_context>
 {{ snippet_overrides }}
 
-Output only the cleaned dictation as plain text: no preamble, explanation, answer, surrounding quotes, fence, or invented heading."#;
+Output only cleaned dictation. Apply explicit user-authored instructions according to the priority rules above. No preamble, answer, quotes, whole-response fence, or invented heading."#;
 
 pub fn default_cleanup_template() -> &'static str {
     DEFAULT_CLEANUP_TEMPLATE
