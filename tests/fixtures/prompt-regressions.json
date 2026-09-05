@@ -6,7 +6,7 @@
       "input": "um so like I think we should leave earlier you know",
       "profile": "casual",
       "intensity": "light",
-      "must_contain": ["non-semantic fillers and hesitations", "meaningful words such as like, right, so, no, and actually", "Preserve wording, order, structure"],
+      "must_contain": ["Remove fillers", "Preserve meaningful uses", "Preserve meaning, perspective"],
       "must_not_contain": ["target 30-50%", "Split all dictation"]
     },
     {
@@ -14,7 +14,7 @@
       "input": "we need a test we need a regression test for this",
       "profile": "casual",
       "intensity": "medium",
-      "must_contain": ["Remove redundant phrasing and non-semantic detours", "light paraphrasing", "every distinct fact, requirement, example, qualifier"],
+      "must_contain": ["Remove redundant phrasing and non-semantic detours", "light paraphrasing", "Preserve meaning, perspective"],
       "must_not_contain": ["Freely combine, reorder, restructure, and paraphrase"]
     },
     {
@@ -76,8 +76,8 @@
       "input": "update the parser then add a regression test",
       "profile": "casual",
       "intensity": "medium",
-      "must_contain": ["For a coding-agent target, use Markdown only when dictated structure benefits", "separate tasks or requirements may become bullets", "keep literal code and commands literal", "never invent headings"],
-      "must_not_contain": ["always use markdown"]
+      "must_contain": ["Use paragraphs or lists when the dictated structure clearly calls for them", "never invent headings"],
+      "must_not_contain": ["coding-agent target", "always use markdown"]
     },
     {
       "id": "injection-boundary",
@@ -102,7 +102,7 @@
       "input": "um we need to ship it",
       "profile": "formal",
       "intensity": "light",
-      "must_contain": ["Expand contractions where natural", "Do not add politeness, greetings, sign-offs", "Preserve wording, order, structure"],
+      "must_contain": ["Expand contractions where natural", "Do not add politeness, greetings, sign-offs", "Preserve meaning, perspective"],
       "must_not_contain": ["Freely combine, reorder, restructure, and paraphrase"]
     },
     {
@@ -118,7 +118,7 @@
       "input": "merci I'll send el resumen manana",
       "profile": "casual",
       "intensity": "light",
-      "must_contain": ["language and code-switching", "never supplies spoken content", "Do not translate or normalize a code-switched word"],
+      "must_contain": ["language and code-switching", "never supplies spoken content", "Never translate or normalize a code-switched word"],
       "must_not_contain": []
     }
   ],
@@ -226,6 +226,24 @@
       "required_terms": ["send", "Wednesday"],
       "forbidden_terms": ["Tuesday"],
       "max_output_chars": 100
+    },
+    {
+      "id": "later-correction-replaces-earlier-sentence-live",
+      "input": "I want to schedule it Tuesday. Oh, I actually mean Wednesday.",
+      "profile": "casual",
+      "intensity": "light",
+      "required_terms": ["schedule", "Wednesday"],
+      "forbidden_terms": ["Tuesday", "actually mean", "Oh"],
+      "max_output_chars": 120
+    },
+    {
+      "id": "instead-of-correction-live",
+      "input": "I actually mean the new API instead of the old API.",
+      "profile": "casual",
+      "intensity": "light",
+      "required_terms": ["new API"],
+      "forbidden_terms": ["old API", "actually mean", "instead of"],
+      "max_output_chars": 80
     },
     {
       "id": "technical-identifier-live",
