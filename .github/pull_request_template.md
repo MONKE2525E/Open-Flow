@@ -1,3 +1,8 @@
+<!--
+  Normal pull requests target master directly. Do not target dev or another
+  integration branch.
+-->
+
 ## Thinking Path
 
 <!--
@@ -56,6 +61,7 @@
 
 ## Checklist
 
+- [ ] This PR targets `master` directly
 - [ ] Thinking path traces from Verenu context down to this specific change
 - [ ] Model used is specified (provider + version)
 - [ ] Checked `docs/ROADMAP.md` - this PR does not duplicate planned work

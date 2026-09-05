@@ -124,4 +124,4 @@ Audit performed 2026-08-05. The app contains 172 `<button>` elements, two visual
 2. Start a new dropdown with the five `ui-dropdown` classes and the headless `Dropdown` controller. Give a feature its own behavior only when the selection logic needs it.
 3. Before extracting another control, confirm the same semantic intent appears at least three times. Similar pixels are not enough.
 4. Keep colors, radii, focus states, and core motion in `src/theme.css`, `src/ui.css`, or `src/lib/motion.ts`, never in a copied component rule.
-5. Preserve selectors named in `CLAUDE.md`'s smoke-test contract, even when their visual treatment moves into a shared primitive.
+5. Preserve selectors named in `AGENTS.md`'s smoke-test contract, even when their visual treatment moves into a shared primitive.

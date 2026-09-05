@@ -107,7 +107,7 @@ pub fn detect_backend() -> LlamaBackend {
             LlamaBackend::Cpu
         }
     }
-    // Not a supported release target (Windows/macOS only, see CLAUDE.md),
+    // Not a supported release target (Windows/macOS only, see AGENTS.md),
     // but this must still return something so the crate type-checks when
     // built or analyzed on other platforms (e.g. a Linux CI/dev machine).
     #[cfg(not(any(windows, target_os = "macos")))]
@@ -329,7 +329,7 @@ fn extract_archive(archive_path: &Path, dest: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-// Not a supported release target (Windows/macOS only, see CLAUDE.md), but
+// Not a supported release target (Windows/macOS only, see AGENTS.md), but
 // this must still exist so the crate type-checks when built or analyzed on
 // other platforms (e.g. a Linux CI/dev machine) — mirrors detect_backend()'s
 // Linux fallback above. Never actually reached in practice since nothing
