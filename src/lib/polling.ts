@@ -14,9 +14,10 @@ export function startPolling(
   function schedule() {
     clearTimeout(timer);
     if (stopped) return;
-    const delay = document.hidden
-      ? options.hiddenIntervalMs
-      : typeof intervalMs === 'function' ? intervalMs() : intervalMs;
+    let delay = options.hiddenIntervalMs;
+    if (!document.hidden) {
+      delay = typeof intervalMs === 'function' ? intervalMs() : intervalMs;
+    }
     if (delay !== undefined) timer = setTimeout(request, delay);
   }
 
