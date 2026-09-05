@@ -174,18 +174,6 @@ async fn check_repo(
     let Some(release) = select_release(&releases, channel) else {
         return Ok(None);
     };
-    let Some(display_version) = release_display_version(&release, channel) else {
-        log::warn!(
-            "Ignoring release with malformed version tag: {}",
-            release.tag_name
-        );
-        return Ok(None);
-    };
-
-    if !should_offer_release(&display_version, &current_package_version(), require_newer) {
-        return Ok(None);
-    }
-
     let Some((asset, install_mode)) =
         select_release_asset_for_target(&release.assets, current_update_target())
     else {
@@ -196,6 +184,17 @@ async fn check_repo(
         );
         return Ok(None);
     };
+    let Some(display_version) = installer_version(&asset.name) else {
+        log::warn!(
+            "Ignoring release with malformed installer filename: {}",
+            asset.name
+        );
+        return Ok(None);
+    };
+
+    if !should_offer_release(&display_version, &current_package_version(), require_newer) {
+        return Ok(None);
+    }
 
     Ok(Some(UpdateInfo {
         version: display_version,
@@ -205,30 +204,13 @@ async fn check_repo(
     }))
 }
 
-fn release_display_version(release: &GhRelease, channel: UpdateChannel) -> Option<String> {
-    let version = release_version(&release.tag_name)?;
-
-    // The current 0.18.0 release was published under a legacy `-beta` tag,
-    // but GitHub marks it as a normal release and its release name is stable.
-    // Keep that tag detail out of the version shown to stable users.
-    if matches!(channel, UpdateChannel::Stable)
-        && !release.prerelease
-        && !release_is_explicitly_beta(release)
-        && is_beta_release_tag(&version)
-    {
-        return version.split('-').next().map(str::to_owned);
-    }
-
-    Some(version)
-}
-
 fn select_release(releases: &[GhRelease], channel: UpdateChannel) -> Option<&GhRelease> {
     releases
         .iter()
         .enumerate()
         .filter(|(_, release)| !release.draft && release_matches_channel(release, channel))
         .filter_map(|(index, release)| {
-            release_version(&release.tag_name).map(|version| (index, release, version))
+            release_installer_version(release).map(|version| (index, release, version))
         })
         // Keep the first release when normalized versions tie. GitHub returns
         // releases newest-first, so this preserves the newest prerelease build.
@@ -239,6 +221,32 @@ fn select_release(releases: &[GhRelease], channel: UpdateChannel) -> Option<&GhR
             },
         )
         .map(|(_, release, _)| release)
+}
+
+/// Installer filenames are the version source of truth. Release tags have
+/// historically included stale beta/nightly suffixes, while the filenames
+/// are also the names the user actually installs.
+fn release_installer_version(release: &GhRelease) -> Option<String> {
+    release
+        .assets
+        .iter()
+        .find_map(|asset| installer_version(&asset.name))
+}
+
+fn installer_version(asset_name: &str) -> Option<String> {
+    let lowercase_name = asset_name.to_ascii_lowercase();
+    let prefix_start = lowercase_name.find("verenu_")?;
+    let version_and_platform = &asset_name[prefix_start + "verenu_".len()..];
+    let version_end = version_and_platform
+        .find('_')
+        .unwrap_or(version_and_platform.len());
+    let version = &version_and_platform[..version_end];
+    let version = version
+        .strip_suffix(".dmg")
+        .or_else(|| version.strip_suffix(".msi"))
+        .or_else(|| version.strip_suffix(".exe"))
+        .unwrap_or(version);
+    release_version(version)
 }
 
 fn release_matches_channel(release: &GhRelease, channel: UpdateChannel) -> bool {
@@ -581,9 +589,9 @@ fn find_asset_with_suffix_and_hints<'a>(
 #[cfg(test)]
 mod tests {
     use super::{
-        current_package_version, find_asset_with_suffix, is_authorized_release_asset_url,
-        is_beta_version, is_newer, normalize_version, parse_prerelease_parts,
-        release_display_version, release_version, select_release, select_release_asset_for_target,
+        current_package_version, find_asset_with_suffix, installer_version,
+        is_authorized_release_asset_url, is_beta_version, is_newer, normalize_version,
+        parse_prerelease_parts, release_version, select_release, select_release_asset_for_target,
         should_offer_release, GhAsset, GhRelease, InstallMode, UpdateChannel, UpdateTarget,
         VersionPart,
     };
@@ -608,13 +616,16 @@ mod tests {
         target_commitish: &str,
         prerelease: bool,
     ) -> GhRelease {
+        let assets = release_version(tag_name)
+            .map(|version| vec![asset(&format!("Verenu_{version}_x64-setup.exe"))])
+            .unwrap_or_default();
         GhRelease {
             tag_name: tag_name.to_string(),
             name: Some(tag_name.to_string()),
             target_commitish: target_commitish.to_string(),
             draft: false,
             prerelease,
-            assets: vec![asset("Verenu_0.15.0_x64-setup.exe")],
+            assets,
         }
     }
 
@@ -731,21 +742,41 @@ mod tests {
     }
 
     #[test]
-    fn stable_display_version_removes_stale_beta_suffix() {
+    fn installer_filename_version_ignores_stale_release_tag() {
         let release = release_with_name(
             "Verenu-0.18.0-beta",
             "Verenu 0.18.0 - Colors!",
             "master",
             false,
         );
+        let installer = "Verenu_0.18.0_x64-setup.exe";
+
+        assert_eq!(installer_version(installer), Some("0.18.0".into()));
+        assert!(!is_newer("0.18.0", "0.18.0"));
+        assert_eq!(release.assets[0].name, "Verenu_0.18.0-beta_x64-setup.exe");
+
+        let mut release = release;
+        release.assets = vec![asset(installer)];
+        assert_eq!(
+            select_release(&[release], UpdateChannel::Stable)
+                .expect("stable release")
+                .assets[0]
+                .name,
+            installer
+        );
+    }
+
+    #[test]
+    fn release_selection_uses_installer_version_over_release_tag() {
+        let mut current_release = release("Verenu-0.17.0", "master");
+        current_release.assets = vec![asset("Verenu_0.18.0_x64-setup.exe")];
+        let other = release("Verenu-0.19.0", "feature/testing");
 
         assert_eq!(
-            release_display_version(&release, UpdateChannel::Stable),
-            Some("0.18.0".into())
-        );
-        assert_eq!(
-            release_display_version(&release, UpdateChannel::Beta),
-            Some("0.18.0-beta".into())
+            select_release(&[current_release, other], UpdateChannel::Stable)
+                .expect("stable release")
+                .tag_name,
+            "Verenu-0.17.0"
         );
     }
 
