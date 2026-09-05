@@ -89,7 +89,10 @@ When executing tasks, refer to the guidelines in the `Agent-Skills/` directory:
 
 ## CI/CD & Review
 
-- **PR checks workflow** (`.github/workflows/pr-checks.yml`) keeps frontend and OS-matrix Rust jobs, then runs the unified fast profile with JSON/JUnit reports
+- `master` is the only shared integration and release branch. Open pull requests directly into `master`; do not use an intermediate `dev` branch or merge `dev` into `master`
+- GitButler workspaces should use `origin/master` as their target; verify with `but config target` before creating a pull request
+- **PR checks workflow** (`.github/workflows/pr-checks.yml`) runs for pull requests targeting `master`, keeps frontend and OS-matrix Rust jobs, then runs the unified fast profile with JSON/JUnit reports
+- **Morning nightly release workflow** (`.github/workflows/morning-release.yml`) runs on schedule or manual dispatch, compares the current `master` snapshot with the latest reachable nightly baseline, and publishes prerelease installers from `master`
 - **Extended profiles workflow** (`.github/workflows/extended-test-profiles.yml`) runs opt-in live/native profiles on schedule or manual dispatch
 - **Build installers workflow** (`.github/workflows/build-installers.yml`) is manual (`workflow_dispatch`) — builds release installers on demand, not on every push
 - **Dependency review** (`.github/workflows/dependency-review.yml`) gates new dependencies for supply-chain risk
@@ -310,7 +313,7 @@ The `transcription_language` setting (ISO 639-1, default `en`) is sent to Groq/O
 
 The frontend polls `api.verenu.com/v1/provider-status` every 5 minutes (`src/lib/serviceStatus.ts`) and shows an in-app banner (`ProviderStatusBanner.svelte`, replacing the update-available banner when both are pending) only when a provider the user has actually selected for transcription or cleanup is flagged with a real issue. "Real issue" means the backend's `showToUsers` flag is true AND `status` is neither `operational` nor `unknown` (`unknown` means the provider doesn't publish a machine-readable feed, not that something is broken) — `filter_alerts()` in `service_status.rs` is the single source of truth for that gate. `api.verenu.com/v1/health` is polled every 20 minutes into `appStore.apiHealthy` with no UI yet, for future use. Settings → Developer has a "Run Check" button (`check_provider_status_raw`) that shows the unfiltered API response for debugging.
 
-About has an opt-in "Beta updates" toggle backed by `beta_updates_enabled`. Enabling it requires a warning confirmation and switches update checks to published releases whose GitHub `target_commitish` is `dev`; stable checks use `master`. The updater ignores drafts and selects the highest numeric version on the selected branch.
+About has an opt-in "Beta updates" toggle backed by `beta_updates_enabled`. Enabling it requires a warning confirmation and switches update checks to published prereleases/nightlies from `master`; stable checks also use `master` but ignore prereleases. The updater ignores drafts and selects the highest numeric version on the selected channel.
 
 If a transcription or cleanup call fails with a provider-side error (`is_retryable_provider_error()` — quota, or a retryable timeout/429/5xx), the pipeline emits `verenu:recheck-provider-status` so the frontend re-polls immediately instead of waiting for the next scheduled check. These are the app's only calls to a Verenu-owned server; they are plain GETs that never include dictated audio, text, keys, or history (see [docs/DATA_AND_PRIVACY.md](docs/DATA_AND_PRIVACY.md)).
 
