@@ -1183,6 +1183,11 @@ impl SyncManager {
                 Ok(map) => map.values().cloned().collect::<Vec<_>>(),
                 Err(_) => return,
             };
+            // No possible targets: avoid opening/querying the peer database
+            // every five seconds on machines with no discovered devices.
+            if discovered.is_empty() {
+                return;
+            }
             let paired = paired_set(conn_peers(&self.inner.db));
             let backoff = match self.inner.backoff.lock() {
                 Ok(b) => b,

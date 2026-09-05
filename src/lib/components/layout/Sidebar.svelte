@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '../../tauri';
+  import { startPolling } from '../../polling';
   import { appStore } from '../../stores';
   import { icons } from '../../icons';
   import { isMac, isWindows } from '../../platform';
@@ -42,21 +43,19 @@
   let memoryMb = tweened(0, { duration: motionMs(800), easing: expoOut });
 
   onMount(() => {
+    let active = true;
     const refresh = async () => {
       try {
         const next = await invoke<number>('get_memory_mb');
-        if (next !== rawMemoryMb) {
+        if (active && next !== rawMemoryMb) {
           memoryDir = next > rawMemoryMb ? 1 : -1;
           rawMemoryMb = next;
           memoryMb.set(next);
         }
       } catch { /* dev mode */ }
     };
-    refresh();
-    // A footer diagnostic, not live telemetry: 5s keeps the number honest
-    // while halving the IPC + tween churn of the old 2s cadence.
-    const id = setInterval(refresh, 5000);
-    return () => clearInterval(id);
+    const poll = startPolling(refresh, 5000);
+    return () => { active = false; poll.stop(); };
   });
 
   const HOME_NAV_ITEMS = [

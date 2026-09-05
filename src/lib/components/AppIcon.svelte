@@ -1,21 +1,17 @@
 <script lang="ts" module>
   import { invoke } from '../tauri';
   import { normalizeExe } from '../appMappings';
+  import { createIconCache } from '../iconCache';
 
   // Module-level so every AppIcon instance across the app shares one fetch
   // per exe — Contexts' picker/rows and AppMappingsEditor's rows all resolve
   // the same handful of icons without re-invoking the native extractor.
-  const iconCache = new Map<string, Promise<string | null>>();
+  const iconCache = createIconCache();
 
   function loadIcon(exe: string): Promise<string | null> {
     if (exe.startsWith('?::')) return Promise.resolve(null);
     const key = normalizeExe(exe);
-    let pending = iconCache.get(key);
-    if (!pending) {
-      pending = invoke<string | null>('get_app_icon', { exe: key }).catch(() => null);
-      iconCache.set(key, pending);
-    }
-    return pending;
+    return iconCache.get(key, () => invoke<string | null>('get_app_icon', { exe: key }));
   }
 </script>
 

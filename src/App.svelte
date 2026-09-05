@@ -18,11 +18,12 @@
   import Setup from './lib/views/Setup.svelte';
   import { getVersion, invoke, isTauriRuntime, listen } from './lib/tauri';
   import { startAutomaticUpdateChecks } from './lib/updates';
+  import { startPolling } from './lib/polling';
   import { startLocalSttListeners } from './lib/localSttStore.svelte';
   import { startLocalLlmListeners } from './lib/localLlmStore.svelte';
   import { startDownloadManagerListeners } from './lib/downloadManager.svelte';
   import { refreshTranscriptionModel } from './lib/transcriptionModelStore.svelte';
-  import { startProviderStatusChecks, startApiHealthChecks } from './lib/serviceStatus';
+  import { startProviderStatusChecks } from './lib/serviceStatus';
   import { classifyIpcError, settingsSectionForKind, type ErrorKind } from './lib/errors';
   import type { SettingsSectionId } from './lib/settingsSections';
   import { scrollEdges } from './lib/scrollFade';
@@ -116,12 +117,17 @@
     prevSetupComplete = complete;
   });
 
+  let connectivityInFlight = false;
   async function pingConnectivity() {
+    if (connectivityInFlight) return;
+    connectivityInFlight = true;
     try {
       const online = await invoke<boolean>('check_connectivity');
       appStore.isOnline = online;
     } catch {
       appStore.isOnline = false;
+    } finally {
+      connectivityInFlight = false;
     }
   }
 
@@ -165,7 +171,6 @@
     let stopLocalLlmListeners: (() => void) | undefined;
     let stopDownloadManagerListeners: (() => void) | undefined;
     let stopProviderStatusChecks: (() => void) | undefined;
-    let stopApiHealthChecks: (() => void) | undefined;
     let stopSyncListeners: (() => void) | undefined;
     let stopTitleBarMetricsListener: (() => void) | undefined;
 
@@ -278,7 +283,6 @@
       stopLocalLlmListeners = startLocalLlmListeners();
       stopDownloadManagerListeners = startDownloadManagerListeners();
       stopProviderStatusChecks = startProviderStatusChecks();
-      stopApiHealthChecks = startApiHealthChecks();
     } catch (error) {
       console.error('Failed to start listeners and status checks:', error);
     }
@@ -298,16 +302,7 @@
     };
     media?.addEventListener?.('change', onSystemThemeChange);
 
-    pingConnectivity();
-    let connectivityTimer = setInterval(pingConnectivity, 60_000);
-    const handleVisibility = () => {
-      clearInterval(connectivityTimer);
-      if (!document.hidden) {
-        pingConnectivity();
-        connectivityTimer = setInterval(pingConnectivity, 60_000);
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
+    const connectivityPoll = startPolling(pingConnectivity, 60_000);
 
     return () => {
       mounted = false;
@@ -320,12 +315,10 @@
       if (stopLocalLlmListeners) stopLocalLlmListeners();
       if (stopDownloadManagerListeners) stopDownloadManagerListeners();
       if (stopProviderStatusChecks) stopProviderStatusChecks();
-      if (stopApiHealthChecks) stopApiHealthChecks();
       if (stopSyncListeners) stopSyncListeners();
       if (stopTitleBarMetricsListener) stopTitleBarMetricsListener();
       media?.removeEventListener?.('change', onSystemThemeChange);
-      clearInterval(connectivityTimer);
-      document.removeEventListener('visibilitychange', handleVisibility);
+      connectivityPoll.stop();
     };
   });
 </script>

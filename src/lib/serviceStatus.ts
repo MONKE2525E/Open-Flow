@@ -4,7 +4,6 @@ import { invoke, listen } from './tauri';
 import { ensureNotificationPermission, isNotificationPermissionGranted } from './notifications';
 
 const PROVIDER_STATUS_INTERVAL_MS = 5 * 60 * 1000;
-const API_HEALTH_INTERVAL_MS = 20 * 60 * 1000;
 const SERVICE_CHECKS_SETTING = 'verenu_service_checks_enabled';
 
 let serviceChecksEnabled = true;
@@ -58,7 +57,6 @@ export function setServiceChecksEnabled(enabled: boolean): void {
   // An explicit opt-in should take effect immediately rather than waiting
   // for the next scheduled interval.
   void checkStatus();
-  void checkApiHealth();
 }
 
 export async function checkStatus(): Promise<void> {
@@ -156,26 +154,6 @@ export async function checkStatus(): Promise<void> {
   }
 }
 
-// Health has no UI today — it's polled in the background so the state is
-// already warm for future features that need to know whether api.verenu.com
-// is reachable.
-async function checkApiHealth(): Promise<void> {
-  if (!(await getServiceChecksEnabled())) {
-    appStore.apiHealthy = null;
-    return;
-  }
-
-  try {
-    const healthy = await invoke<boolean>('check_verenu_api_health');
-    appStore.apiHealthy = serviceChecksEnabled ? healthy : null;
-  } catch (error) {
-    // Don't leave a stale prior result in place — a failed check means we no
-    // longer know the current state, not that it's confirmed unhealthy.
-    appStore.apiHealthy = null;
-    console.warn('Verenu API health check failed:', error);
-  }
-}
-
 export function startProviderStatusChecks(): () => void {
   void checkStatus();
   const timer = window.setInterval(() => void checkStatus(), PROVIDER_STATUS_INTERVAL_MS);
@@ -200,10 +178,4 @@ export function startProviderStatusChecks(): () => void {
     window.clearInterval(timer);
     unlistenRecheck?.();
   };
-}
-
-export function startApiHealthChecks(): () => void {
-  void checkApiHealth();
-  const timer = window.setInterval(() => void checkApiHealth(), API_HEALTH_INTERVAL_MS);
-  return () => window.clearInterval(timer);
 }

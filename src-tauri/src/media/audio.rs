@@ -193,6 +193,29 @@ pub struct RecordingResult {
     pub truncated: bool,
 }
 
+// Stream setup can fail after the processing thread starts. Always stop and
+// join it, including those early returns, so its queue and recovery sink die.
+struct ProcessingWorker {
+    stop: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<(Vec<f32>, bool, f32)>>,
+}
+
+impl ProcessingWorker {
+    fn finish(mut self) -> std::thread::Result<(Vec<f32>, bool, f32)> {
+        self.stop.store(true, Ordering::Relaxed);
+        self.handle.take().expect("processing worker handle").join()
+    }
+}
+
+impl Drop for ProcessingWorker {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 impl RecordingSession {
     pub fn start(
         device_name: Option<String>,
@@ -334,6 +357,10 @@ impl RecordingSession {
                 };
                 (processed, recording_truncated, raw_rms)
             });
+            let worker = ProcessingWorker {
+                stop: Arc::clone(&stop_processing),
+                handle: Some(worker),
+            };
 
             let level_cb = Arc::clone(&level_w);
             let queue_cb = Arc::clone(&queue);
@@ -403,7 +430,7 @@ impl RecordingSession {
             raw_level_w.store(0f32.to_bits(), Ordering::Relaxed);
             stop_processing.store(true, Ordering::Relaxed);
 
-            let (data, recording_truncated, raw_rms) = match worker.join() {
+            let (data, recording_truncated, raw_rms) = match worker.finish() {
                 Ok(samples) => samples,
                 Err(_) => {
                     let _ =
@@ -411,6 +438,9 @@ impl RecordingSession {
                     return;
                 }
             };
+            // The callback and worker have both stopped. Release the bounded
+            // capture queue before allocating transcription output.
+            drop(queue);
 
             let dropped = dropped_samples.load(Ordering::Relaxed);
             if dropped > 0 {
@@ -419,7 +449,7 @@ impl RecordingSession {
 
             let dur_ms = data.len() as u64 * 1000 / sample_rate as u64;
             let overall_rms = rms_f32(&data);
-            let (encode_data, encode_rate) = resample_to_16k(&data, sample_rate);
+            let (encode_data, encode_rate) = resample_owned_to_16k(data, sample_rate);
             let result = encode_wav(&encode_data, encode_rate, 1).map(|wav| RecordingResult {
                 wav,
                 samples_16k: encode_data,
@@ -592,6 +622,14 @@ fn resample_to_16k(mono: &[f32], sample_rate: u32) -> (Vec<f32>, u32) {
     (resampled, TARGET)
 }
 
+fn resample_owned_to_16k(mono: Vec<f32>, sample_rate: u32) -> (Vec<f32>, u32) {
+    if sample_rate == 16_000 {
+        return (mono, 16_000);
+    }
+    // Dropping the native-rate input here prevents it overlapping WAV encoding.
+    resample_to_16k(&mono, sample_rate)
+}
+
 pub(crate) fn rms_f32(data: &[f32]) -> f32 {
     if data.is_empty() {
         return 0.0;
@@ -609,7 +647,9 @@ pub(crate) fn encode_wav(samples: &[f32], sample_rate: u32, channels: u16) -> Re
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
     };
-    let mut buf = std::io::Cursor::new(Vec::new());
+    // PCM16 payload plus hound's 44-byte PCM header. Avoid geometric growth
+    // and its unused retained capacity in every completed recording.
+    let mut buf = std::io::Cursor::new(Vec::with_capacity(44 + samples.len() * 2));
     let mut writer = hound::WavWriter::new(&mut buf, spec)?;
     for &s in samples {
         writer.write_sample((clamp_unit_sample(s) * i16::MAX as f32) as i16)?;
@@ -623,6 +663,82 @@ mod tests {
     use super::{append_capped_samples, enqueue_i16_buffer, push_overwriting_oldest, DISPLAY_GAIN};
     use crossbeam_queue::ArrayQueue;
     use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+
+    #[test]
+    fn failed_stream_setup_stops_and_joins_processing_worker() {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_stop = stop.clone();
+        let retained = std::sync::Arc::new(vec![0.0f32; 320_000]);
+        let worker_retained = retained.clone();
+        let worker = super::ProcessingWorker {
+            stop,
+            handle: Some(std::thread::spawn(move || {
+                while !worker_stop.load(Ordering::Relaxed) {
+                    std::thread::yield_now();
+                }
+                drop(worker_retained);
+                (Vec::new(), false, 0.0)
+            })),
+        };
+        drop(worker);
+        assert_eq!(std::sync::Arc::strong_count(&retained), 1);
+    }
+
+    #[test]
+    fn owned_resampling_preserves_samples_and_reuses_16k_allocation() {
+        for rate in [8_000, 16_000, 44_100, 48_000, 96_000] {
+            let input: Vec<f32> = (0..rate).map(|i| (i as f32 * 0.01).sin()).collect();
+            let original_ptr = input.as_ptr();
+            let expected = super::resample_to_16k(&input, rate);
+            let actual = super::resample_owned_to_16k(input, rate);
+            assert_eq!(actual, expected);
+            if rate == 16_000 {
+                assert_eq!(actual.0.as_ptr(), original_ptr);
+            }
+        }
+    }
+
+    #[test]
+    fn wav_allocation_matches_pcm_payload_and_round_trips() {
+        let samples = vec![0.5; 16_000 * 60];
+        let wav = super::encode_wav(&samples, 16_000, 1).unwrap();
+        // Reproduce the previous grow-from-empty allocation on this fixture.
+        let mut legacy = std::io::Cursor::new(Vec::new());
+        let mut writer = hound::WavWriter::new(
+            &mut legacy,
+            hound::WavSpec {
+                channels: 1,
+                sample_rate: 16_000,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            },
+        )
+        .unwrap();
+        for &sample in &samples {
+            writer
+                .write_sample((sample * i16::MAX as f32) as i16)
+                .unwrap();
+        }
+        writer.finalize().unwrap();
+        let legacy = legacy.into_inner();
+        assert_eq!(wav, legacy);
+        println!(
+            "60s PCM16 WAV capacity bytes: before={} after={}",
+            legacy.capacity(),
+            wav.capacity()
+        );
+        println!(
+            "60s 16k stop live buffer bytes excluding queue: before={} after={}",
+            samples.capacity() * 4 * 2 + legacy.capacity(),
+            samples.capacity() * 4 + wav.capacity()
+        );
+        assert_eq!(wav.len(), 44 + samples.len() * 2);
+        assert_eq!(wav.capacity(), wav.len());
+        let reader = hound::WavReader::new(std::io::Cursor::new(wav)).unwrap();
+        assert_eq!(reader.spec().sample_rate, 16_000);
+        assert_eq!(reader.duration() as usize, samples.len());
+        assert!(reader.into_samples::<i16>().all(|s| s.unwrap() == 16383));
+    }
 
     #[test]
     fn push_overwrite_drops_oldest_when_queue_is_full() {

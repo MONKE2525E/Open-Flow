@@ -687,19 +687,17 @@ fn query_words(
         }
     }
 
+    let unique_words = counts.len() as i64;
     let mut top: Vec<InsightsWordCount> = counts
-        .iter()
-        .map(|(word, count)| InsightsWordCount {
-            word: word.clone(),
-            count: *count,
-        })
+        .into_iter()
+        .map(|(word, count)| InsightsWordCount { word, count })
         .collect();
     top.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.word.cmp(&b.word)));
     top.truncate(TOP_WORDS_LIMIT);
 
     Ok(InsightsWords {
         top,
-        unique_words: counts.len() as i64,
+        unique_words,
         longest_word: longest,
         avg_word_length: if length_count > 0 {
             length_sum as f64 / length_count as f64

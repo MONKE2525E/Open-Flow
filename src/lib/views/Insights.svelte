@@ -3,6 +3,7 @@
   import { fade, fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { invoke, listen } from '../tauri';
+  import { startPolling } from '../polling';
   import { formatIpcError } from '../stores';
   import { MOTION_MS, motionMs } from '../motion';
   import Dropdown from '../components/Dropdown.svelte';
@@ -103,11 +104,14 @@
     mounted = true;
     void loadContexts();
     load();
+    // Events keep dictations current; reconcile missed events and date rollover
+    // once a minute while visible, and immediately when the window returns.
+    const poll = startPolling(() => load({ silent: true }), 60_000, { immediate: false });
     let unlisten: (() => void) | undefined;
     // Refresh live as new dictations land, so the page never shows stale
     // numbers while it's open. Silent so a background refresh never flashes
     // the loading state.
-    listen('verenu:transcribed', () => load({ silent: true }))
+    listen('verenu:transcribed', () => { if (!document.hidden) poll.request(); })
       .then((cleanup) => {
         // If the component already unmounted while `listen` was still
         // resolving, tear the listener down immediately rather than leaking
@@ -119,14 +123,10 @@
         }
       })
       .catch(() => {});
-    // Belt and suspenders: poll on a fixed cadence too, so the page catches
-    // up even when a transcription event was missed (e.g. it landed before
-    // the page opened). Silent ticks never flash the loading state.
-    const timer = setInterval(() => load({ silent: true }), 10_000);
     return () => {
       mounted = false;
       unlisten?.();
-      clearInterval(timer);
+      poll.stop();
     };
   });
 </script>
