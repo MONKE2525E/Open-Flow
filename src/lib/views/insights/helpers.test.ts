@@ -16,7 +16,8 @@ describe('pace meter scale', () => {
   it('grows the ceiling past the best instead of pinning it to the last tick', () => {
     expect(paceScale(120).max).toBe(200); // floor, so slow talkers keep a stable scale
     expect(paceScale(245).max).toBe(250);
-    expect(paceScale(251).max).toBe(300);
+    expect(paceScale(251).max).toBe(250);
+    expect(paceScale(254).bestTick).toBe(PACE_TICKS - 1);
   });
 
   it('has no marker before a best is measured', () => {
