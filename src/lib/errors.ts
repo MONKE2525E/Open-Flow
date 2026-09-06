@@ -26,7 +26,8 @@ export type ErrorKind =
   | 'no-backend'
   | 'invalid-backup'
   | 'unsupported-backup'
-  | 'duplicate';
+  | 'duplicate'
+  | 'storage-full';
 
 interface ClassifiedError {
   kind: ErrorKind;
@@ -54,6 +55,20 @@ const KIND_HINTS: ReadonlyArray<readonly [ErrorKind, readonly string[]]> = [
   ['invalid-backup', ['invalid backup']],
   ['unsupported-backup', ['unsupported backup']],
   ['duplicate', ['unique constraint']],
+  [
+    'storage-full',
+    [
+      'storage_full',
+      'storage is full',
+      'disk is full',
+      'disk full',
+      'database or disk is full',
+      'no space left on device',
+      'not enough space',
+      'os error 112',
+      'error 112',
+    ],
+  ],
 ];
 
 /** Copy for kinds whose wording is fixed and shared across surfaces. */
@@ -70,6 +85,7 @@ const KIND_MESSAGES: Partial<Record<ErrorKind, string>> = {
   'unsupported-backup':
     "This backup was made by a newer Verenu version and can't be read. Update Verenu to import it.",
   duplicate: 'That term already exists.',
+  'storage-full': 'Change failed because the drive is full. Free up storage, then try again.',
 };
 
 /** Extracts a displayable string from any IPC/JS error shape. */

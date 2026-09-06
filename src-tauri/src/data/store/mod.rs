@@ -1,9 +1,21 @@
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
 
 const SETTINGS_FILE: &str = "settings.json";
+pub(crate) const STORAGE_FULL_ERROR: &str = "STORAGE_FULL";
+
+static SIMULATE_STORAGE_FULL: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn set_storage_full_simulation(enabled: bool) {
+    SIMULATE_STORAGE_FULL.store(enabled, Ordering::Relaxed);
+}
+
+pub(crate) fn storage_full_simulation_enabled() -> bool {
+    SIMULATE_STORAGE_FULL.load(Ordering::Relaxed)
+}
 
 #[derive(Clone)]
 pub struct SettingsHandle {
@@ -102,8 +114,25 @@ impl SettingsHandle {
     }
 
     pub fn save_value(&self, key: impl Into<String>, value: Value) -> Result<(), String> {
-        self.set(key, value)?;
-        self.save()
+        self.save_values([(key, value)])
+    }
+
+    pub fn save_values<I, K>(&self, values: I) -> Result<(), String>
+    where
+        I: IntoIterator<Item = (K, Value)>,
+        K: Into<String>,
+    {
+        let mut settings = self
+            .values
+            .lock()
+            .map_err(|_| "Settings lock was poisoned".to_string())?;
+        let mut next = settings.clone();
+        for (key, value) in values {
+            next.insert(key.into(), value);
+        }
+        write_settings_file(&self.path, &next)?;
+        *settings = next;
+        Ok(())
     }
 }
 
@@ -165,7 +194,7 @@ fn backup_corrupt_settings(path: &Path) {
 fn write_settings_file(path: &Path, values: &Map<String, Value>) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create settings directory: {e}"))?;
+            .map_err(|e| settings_write_error("Failed to create settings directory", &e))?;
     }
     let json = serde_json::to_string_pretty(values)
         .map_err(|e| format!("Failed to serialize settings.json: {e}"))?;
@@ -175,14 +204,35 @@ fn write_settings_file(path: &Path, values: &Map<String, Value>) -> Result<(), S
     if let Err(e) = std::fs::write(&tmp_path, json) {
         // A failed/partial write shouldn't leave a stale temp file behind.
         let _ = std::fs::remove_file(&tmp_path);
-        return Err(format!("Failed to write temporary settings file: {e}"));
+        return Err(settings_write_error("Failed to write temporary settings file", &e));
     }
     if let Err(e) = std::fs::rename(&tmp_path, path) {
         // Don't leave the temp file behind if the swap failed.
         let _ = std::fs::remove_file(&tmp_path);
-        return Err(format!("Failed to replace settings.json atomically: {e}"));
+        return Err(settings_write_error("Failed to replace settings.json atomically", &e));
     }
     Ok(())
+}
+
+fn settings_write_error(operation: &str, error: &impl std::fmt::Display) -> String {
+    let detail = error.to_string();
+    if is_storage_full_error(&detail) {
+        format!("{STORAGE_FULL_ERROR}: {operation}")
+    } else {
+        format!("{operation}: {detail}")
+    }
+}
+
+pub(crate) fn is_storage_full_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("storage_full")
+        || lower.contains("no space left on device")
+        || lower.contains("not enough space")
+        || lower.contains("disk is full")
+        || lower.contains("disk full")
+        || lower.contains("database or disk is full")
+        || lower.contains("os error 112")
+        || lower.contains("error 112")
 }
 
 /// API key names in the store — never expose values to the frontend after write.

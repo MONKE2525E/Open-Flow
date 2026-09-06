@@ -25,6 +25,7 @@
   import { refreshTranscriptionModel } from './lib/transcriptionModelStore.svelte';
   import { startProviderStatusChecks } from './lib/serviceStatus';
   import { classifyIpcError, settingsSectionForKind, type ErrorKind } from './lib/errors';
+  import { SETTINGS_SAVE_ERROR_EVENT } from './lib/settings';
   import type { SettingsSectionId } from './lib/settingsSections';
   import { scrollEdges } from './lib/scrollFade';
   import { fly } from 'svelte/transition';
@@ -165,6 +166,14 @@
     clearTimeout(toastTimer);
   }
 
+  function showErrorToast(raw: string) {
+    const classified = classifyIpcError(raw);
+    errorToast = raw ? classified.message : 'Something went wrong';
+    errorToastKind = raw ? classified.kind : null;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { errorToast = ''; errorToastKind = null; }, 5000);
+  }
+
   onMount(() => {
     let mounted = true;
     let cleanupFn: (() => void) | undefined;
@@ -178,6 +187,11 @@
     let stopProviderStatusChecks: (() => void) | undefined;
     let stopSyncListeners: (() => void) | undefined;
     let stopTitleBarMetricsListener: (() => void) | undefined;
+    const onSettingsSaveError = (event: Event) => {
+      const message = (event as CustomEvent<unknown>).detail;
+      showErrorToast(typeof message === 'string' ? message : 'Something went wrong');
+    };
+    window.addEventListener(SETTINGS_SAVE_ERROR_EVENT, onSettingsSaveError);
 
     if (isWindows && isTauriRuntime()) {
       invoke<NativeTitleBarMetrics>('get_native_titlebar_metrics')
@@ -226,12 +240,7 @@
       }
 
       const unlisten = await listen<string>('verenu:error', (ev) => {
-        const raw = ev.payload ?? '';
-        const classified = classifyIpcError(raw);
-        errorToast = raw ? classified.message : 'Something went wrong';
-        errorToastKind = raw ? classified.kind : null;
-        clearTimeout(toastTimer);
-        toastTimer = setTimeout(() => { errorToast = ''; errorToastKind = null; }, 5000);
+        showErrorToast(ev.payload ?? '');
       });
       cleanupFn = unlisten;
     })();
@@ -322,6 +331,7 @@
       if (stopProviderStatusChecks) stopProviderStatusChecks();
       if (stopSyncListeners) stopSyncListeners();
       if (stopTitleBarMetricsListener) stopTitleBarMetricsListener();
+      window.removeEventListener(SETTINGS_SAVE_ERROR_EVENT, onSettingsSaveError);
       media?.removeEventListener?.('change', onSystemThemeChange);
       connectivityPoll.stop();
     };
@@ -376,7 +386,12 @@
   <DictationPill />
 
   {#if errorToast}
-    <div class="error-toast" role="alert" style:bottom={!appStore.isOnline ? '66px' : '18px'}>
+    <div
+      class="error-toast"
+      role="alert"
+      style:bottom={!appStore.isOnline ? '66px' : '18px'}
+      transition:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base), easing: expoOut }}
+    >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0">
         <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
       </svg>
@@ -553,15 +568,11 @@
     font-size: 12.5px;
     color: var(--danger);
     box-shadow: var(--shadow-popover);
-    z-index: 20;
+    /* Settings sits above the app content; errors must remain visible while a
+       setting change fails inside that page. */
+    z-index: 80;
     max-width: 480px;
-    animation: toastIn 0.18s cubic-bezier(0.22, 1, 0.36, 1);
     transition: bottom 0.15s ease;
-  }
-
-  @keyframes toastIn {
-    from { opacity: 0; transform: translateX(-50%) translateY(6px); }
-    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
   }
 
   .toast-close {

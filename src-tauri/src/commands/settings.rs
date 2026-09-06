@@ -470,6 +470,20 @@ mod setting_key_tests {
 }
 // ---------- generic settings ----------
 
+/// Enables a process-local failure mode for exercising full-disk error UI.
+/// The flag intentionally never touches settings.json, so it can be disabled
+/// even while simulated saves are failing.
+#[tauri::command]
+pub fn set_storage_full_simulation(enabled: bool) -> Result<(), String> {
+    store::set_storage_full_simulation(enabled);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_storage_full_simulation() -> bool {
+    store::storage_full_simulation_enabled()
+}
+
 #[tauri::command]
 pub async fn save_setting(
     app: AppHandle,
@@ -489,19 +503,25 @@ pub async fn save_setting(
     };
     let settings = store::settings_handle(&app)?;
     let key_clone = key.clone();
-    run_blocking("save_setting", move || {
+    let save_result = run_blocking("save_setting", move || {
+        if store::storage_full_simulation_enabled() {
+            return Err(format!(
+                "{}: simulated settings write failure",
+                store::STORAGE_FULL_ERROR
+            ));
+        }
         if key_clone == store::CONTEXTUAL_FORMATTING {
-            settings.set_many([
+            settings.save_values([
                 (store::CONTEXTUAL_FORMATTING, value.clone()),
                 (store::CONTEXTUAL_CAPS, value.clone()),
                 (store::AUTO_SPACING, value),
-            ])?;
-            settings.save()
+            ])
         } else {
             settings.save_value(key_clone, value)
         }
     })
-    .await?;
+    .await;
+    save_result?;
 
     // LAN sync: stamp the change so peers LWW-compare it, and nudge the sync
     // manager to schedule a session. Both are best-effort — a sync failure

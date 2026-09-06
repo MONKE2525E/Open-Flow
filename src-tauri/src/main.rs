@@ -437,6 +437,8 @@ fn main() {
             commands::check_keychain_access,
             commands::save_setting,
             commands::get_setting,
+            commands::set_storage_full_simulation,
+            commands::get_storage_full_simulation,
             commands::get_all_settings,
             commands::list_local_stt_models,
             commands::list_local_llm_models,
