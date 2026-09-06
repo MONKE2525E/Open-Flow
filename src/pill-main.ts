@@ -9,6 +9,7 @@ disableBrowserContextMenu(); // The pill webview lives until the process exits.
 
 type AppearanceMode = 'system' | 'light' | 'dark';
 type EffectiveTheme = 'light' | 'dark';
+const APPEARANCE_CHANGE_EVENT = 'verenu:appearance-mode-changed';
 
 function systemTheme(): EffectiveTheme {
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -38,6 +39,12 @@ applyTheme('system');
 
 void listen<string | null>(ACCENT_CHANGE_EVENT, (event) => {
   applyAccentTheme(document.documentElement, normalizeAccentColor(event.payload));
+});
+
+void listen<AppearanceMode>(APPEARANCE_CHANGE_EVENT, (event) => {
+  if (event.payload === 'system' || event.payload === 'light' || event.payload === 'dark') {
+    applyTheme(event.payload);
+  }
 });
 
 window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change', () => {

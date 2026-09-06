@@ -528,6 +528,14 @@ pub async fn save_setting(
     if crate::app_tray::setting_updates_runtime_icons(&key) {
         crate::apply_runtime_icons(&app, None);
     }
+    if key == store::APPEARANCE_MODE {
+        if let Some(mode) = store::settings_handle(&app)?
+            .get(&key)
+            .and_then(|value| value.as_str().map(str::to_owned))
+        {
+            let _ = app.emit("verenu:appearance-mode-changed", mode);
+        }
+    }
     #[cfg(target_os = "windows")]
     if key == store::APPEARANCE_MODE {
         crate::system::windows_titlebar::refresh_for_app(&app);

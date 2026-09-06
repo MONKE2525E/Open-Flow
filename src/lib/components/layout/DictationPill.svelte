@@ -64,7 +64,7 @@
     align-items: center;
     justify-content: center;
     padding: 0 3px;
-    box-shadow: 0 0 0 1px rgba(255,255,255,0.05) inset;
+    box-shadow: 0 0 0 1px var(--pill-line) inset;
   }
 
   .pill.recording  { width: 132px; }
@@ -84,6 +84,7 @@
     width: 2px;
     background: var(--pill-bar);
     border-radius: 1px;
+    clip-path: inset(0 round 999px);
     animation: barwave 0.85s infinite ease-in-out;
   }
 
@@ -140,7 +141,7 @@
     transition: opacity 0.15s;
   }
   .hf-btn.cancel  { color: var(--pill-muted); }
-  .hf-btn.confirm { color: var(--accent); }
+  .hf-btn.confirm { color: var(--pill-fg); }
   .hf-btn.cancel:hover  { color: var(--pill-muted-strong); }
-  .hf-btn.confirm:hover { color: var(--accent-ink); }
+  .hf-btn.confirm:hover { color: var(--pill-fg); }
 </style>

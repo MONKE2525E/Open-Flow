@@ -1171,8 +1171,9 @@
     font-size: 10.5px;
     font-weight: 500;
     letter-spacing: 0.02em;
-    color: var(--pill-muted);
-    background: var(--pill-bg);
+    color: var(--pill-context-fg);
+    background: var(--pill-context-bg);
+    box-shadow: 0 0 0 1px var(--pill-context-line) inset;
     border-radius: 999px;
     padding: 2px 8px;
     white-space: nowrap;
@@ -1197,7 +1198,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 0 0 1px rgba(255,255,255,0.07) inset;
+    box-shadow: 0 0 0 1px var(--pill-line) inset;
     animation: pillIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   }
 
@@ -1243,7 +1244,8 @@
   .bar {
     width: var(--bar-w, 3px);
     background: var(--pill-bar);
-    border-radius: 999px;
+    border-radius: calc(var(--bar-w, 3px) / 2);
+    clip-path: inset(0 round 999px);
     flex-shrink: 0;
     /* Instant response — no CSS transition so bars snap cleanly */
   }
@@ -1405,8 +1407,8 @@
     position: relative;
     height: 16px;
     line-height: 16px;
-    font-size: 11px;
-    font-weight: 600;
+    font-size: var(--pill-stage-size);
+    font-weight: var(--pill-stage-weight);
     white-space: nowrap;
     display: block;
   }
@@ -1416,7 +1418,7 @@
      sits at 45% so the moving highlight has something to be brighter than. */
   .stage-label {
     display: block;
-    color: rgba(255, 255, 255, 0.45);
+    color: var(--pill-muted);
   }
   .stage-shine {
     position: absolute;
@@ -1427,11 +1429,11 @@
        half-white shoulders either side, fading out at both edges. */
     background-image: linear-gradient(
       90deg,
-      rgba(255, 255, 255, 0) 0%,
-      rgba(255, 255, 255, 0.5) 25%,
-      rgba(255, 255, 255, 1) 50%,
-      rgba(255, 255, 255, 0.5) 75%,
-      rgba(255, 255, 255, 0) 100%
+      var(--pill-shine-clear) 0%,
+      var(--pill-shine-mid) 25%,
+      var(--pill-shine-strong) 50%,
+      var(--pill-shine-mid) 75%,
+      var(--pill-shine-clear) 100%
     );
     background-size: 24px 100%;
     background-repeat: no-repeat;
@@ -1461,8 +1463,8 @@
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    border: 2px solid rgba(255,255,255,0.16);
-    border-top-color: var(--accent);
+    border: 2px solid var(--pill-spinner-track);
+    border-top-color: var(--pill-fg);
     animation: spin 0.8s linear infinite;
     flex-shrink: 0;
   }
@@ -1680,7 +1682,7 @@
     padding: 0 8px 0 14px;
     white-space: nowrap;
   }
-  .copied-icon { color: var(--accent); flex-shrink: 0; }
+  .copied-icon { color: var(--pill-fg); flex-shrink: 0; }
   .copied-text {
     font-size: 11.5px; font-weight: 500;
     white-space: nowrap;
@@ -1689,7 +1691,7 @@
     color: var(--pill-muted);
     animation: hfBtnIn 0.12s cubic-bezier(0.34, 1.56, 0.64, 1) 0.05s both;
   }
-  .hf-btn.copied-dismiss:hover { color: var(--pill-muted-strong); background: rgba(255,255,255,0.14); }
+  .hf-btn.copied-dismiss:hover { color: var(--pill-muted-strong); background: var(--pill-hover); }
 
   /* Handsfree: starts compact (mirrors recording — same DPI-snapped width so the
      recording→handsfree continuation doesn't jump), expands to 112px after 450ms */
@@ -1718,9 +1720,9 @@
     transition: opacity 0.15s;
   }
   .hf-btn.cancel  { color: var(--pill-muted); }
-  .hf-btn.confirm { color: var(--accent); }
+  .hf-btn.confirm { color: var(--pill-fg); }
   .hf-btn.cancel:hover  { color: var(--pill-muted-strong); }
-  .hf-btn.confirm:hover { color: var(--accent-ink); }
+  .hf-btn.confirm:hover { color: var(--pill-fg); }
 
   @keyframes hfBtnIn {
     /* Gentle fade + tiny rise, deliberately no scale — a pop reads as the UI
