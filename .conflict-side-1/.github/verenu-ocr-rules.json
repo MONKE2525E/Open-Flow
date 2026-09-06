@@ -1,9 +1,0 @@
-{
-  "rules": [
-    {
-      "path": "**/*",
-      "rule": ".github/verenu-review-rules.md",
-      "merge_system_rule": true
-    }
-  ]
-}
