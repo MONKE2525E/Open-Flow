@@ -64,8 +64,6 @@ fn main() {
         retry_capture: None,
         cancelled_capture: None,
         paste_failure: None,
-        repair: None,
-        hotkey_recording_repair_complaint: false,
         failover_session_id: None,
         failover_reuse_id: false,
         failover_started_at_unix: 0,
@@ -158,22 +156,6 @@ fn main() {
                                 let vk1 = crate::core::hotkey::map_code_to_vk(k1);
                                 let vk2 = crate::core::hotkey::map_code_to_vk(k2);
                                 crate::core::hotkey::update_keys(vk1, vk2);
-                            }
-                        }
-                    }
-                }
-                if let Some(val) = settings.get(crate::data::store::REPAIR_HOTKEY) {
-                    if let Some(arr) = val.as_array() {
-                        if arr.len() == 3 {
-                            if let (Some(k1), Some(k2), Some(k3)) =
-                                (arr[0].as_str(), arr[1].as_str(), arr[2].as_str())
-                            {
-                                if !k1.is_empty() || !k2.is_empty() || !k3.is_empty() {
-                                    let vk1 = crate::core::hotkey::map_code_to_vk(k1);
-                                    let vk2 = crate::core::hotkey::map_code_to_vk(k2);
-                                    let vk3 = crate::core::hotkey::map_code_to_vk(k3);
-                                    crate::core::hotkey::update_repair_keys(vk1, vk2, vk3);
-                                }
                             }
                         }
                     }
@@ -500,13 +482,6 @@ fn main() {
             commands::start_calibration_monitoring,
             commands::stop_calibration_monitoring,
             commands::stop_and_transcribe_input,
-            commands::start_repair_complaint_recording,
-            commands::stop_repair_complaint_recording,
-            commands::repair_positive_feedback,
-            commands::repair_enter_input,
-            commands::repair_cancel,
-            commands::repair_analyze,
-            commands::repair_apply,
             commands::stop_setup_try_recording,
             commands::stop_recording,
             commands::stop_handless_mode,
