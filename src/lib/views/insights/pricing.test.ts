@@ -32,7 +32,6 @@ describe('Google provider cost estimates', () => {
   });
 });
 
-
 const snapshot: PricingSnapshot = {
   fetched_at: 1,
   rates: [
@@ -60,9 +59,30 @@ describe('Insights pricing', () => {
     expect(summary.hasUnpriced).toBe(false);
   });
 
+  it('matches provider-qualified usage IDs without duplicating the provider', () => {
+    const summary = estimateCost([{
+      model: 'groq/llama-3.3-70b-versatile',
+      provider: 'groq',
+      task: 'cleanup',
+      calls: 1,
+      audio_ms: 0,
+      input_chars: 1_000_000,
+      output_chars: 1_000_000,
+    }], {
+      fetched_at: 1,
+      rates: [{
+        model_id: 'groq/llama-3.3-70b-versatile',
+        prompt_usd_per_token: 0.00000059,
+        completion_usd_per_token: 0.00000079,
+      }],
+    });
+
+    expect(summary.rows[0].cost).toBeCloseTo(0.345);
+    expect(summary.hasUnpriced).toBe(false);
+  });
+
   it('keeps a real sub-cent estimate visible', () => {
     expect(fmtUsd(0.00123)).toBe('$0.00123');
     expect(fmtUsd(0.000001)).toBe('$0.0000010');
   });
 });
-

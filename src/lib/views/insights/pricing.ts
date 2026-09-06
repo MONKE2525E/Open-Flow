@@ -70,10 +70,11 @@ function lookupOpenRouterRate(usage: InsightsProviderUsage, snapshot: PricingSna
   if (usage.task === 'transcription' || !snapshot) return null;
   const model = normalizeModelId(usage.model);
   const short = shortModelId(model);
-  const providerQualified = `${String(usage.provider ?? '').trim().toLowerCase()}/${model}`;
+  const provider = String(usage.provider ?? '').trim().toLowerCase();
+  const providerQualified = provider ? `${provider}/${short}` : null;
   const exact = snapshot.rates.find((rate) => {
     const id = normalizeModelId(rate.model_id);
-    return id === model || id === providerQualified;
+    return id === model || (providerQualified !== null && id === providerQualified);
   });
   const published = exact ?? snapshot.rates.find((rate) => shortModelId(normalizeModelId(rate.model_id)) === short);
   if (!published) return null;
