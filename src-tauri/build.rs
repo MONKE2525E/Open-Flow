@@ -14,6 +14,8 @@ fn main() {
     println!("cargo:rerun-if-changed=Info.plist");
     println!("cargo:rerun-if-changed=icons/icon.png");
     println!("cargo:rerun-if-changed=icons/icon.icns");
+    println!("cargo:rerun-if-changed=icons/verenu-mark.svg");
+    println!("cargo:rerun-if-changed=src/generated_icon_geometry.rs");
     tauri_build::build()
 }
 

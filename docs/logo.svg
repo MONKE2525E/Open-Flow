@@ -1,10 +1,3 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 42 40" width="42" height="40">
-  <!-- 5 bars aligned to bottom, proportions from Sidebar.svelte brand-mark -->
-  <!-- heights: 35% 70% 100% 55% 25% of 40px = 14 28 40 22 10 -->
-  <!-- bar width: 6px, radius: 3px, gap: 3px -->
-  <rect x="0"  y="26" width="6" height="14" rx="3" fill="#d97757"/>
-  <rect x="9"  y="12" width="6" height="28" rx="3" fill="#d97757"/>
-  <rect x="18" y="0"  width="6" height="40" rx="3" fill="#d97757"/>
-  <rect x="27" y="18" width="6" height="22" rx="3" fill="#d97757"/>
-  <rect x="36" y="30" width="6" height="10" rx="3" fill="#d97757"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 254 208" width="254" height="208" fill="none">
+  <use href="../src-tauri/icons/verenu-mark.svg#mark" style="color:#d97757"/>
 </svg>
