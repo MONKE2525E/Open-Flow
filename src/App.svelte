@@ -56,6 +56,11 @@
   function applyTheme() {
     const theme = effectiveTheme(appStore.appearanceMode);
     document.documentElement.dataset.theme = theme;
+    if (isWindows && isTauriRuntime()) {
+      invoke('set_native_titlebar_theme', { dark: theme === 'dark' }).catch((error) => {
+        console.error('Failed to sync native title bar theme:', error);
+      });
+    }
   }
 
   $effect(() => {

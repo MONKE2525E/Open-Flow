@@ -20,6 +20,9 @@ pub mod windows_titlebar {
     pub fn get_native_titlebar_metrics() -> Result<(), String> {
         Err("native title bar metrics are only available on Windows".to_owned())
     }
+
+    #[tauri::command]
+    pub fn set_native_titlebar_theme(_window: tauri::WebviewWindow, _dark: bool) {}
 }
 
 /// Stops and unloads both local model engines (LLM + STT) before the process

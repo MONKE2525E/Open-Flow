@@ -150,6 +150,8 @@ pub async fn import_data(
         let mut settings_applied = 0usize;
         let mut settings_skipped = 0usize;
         let mut runtime_icon_setting_applied = false;
+        #[cfg(target_os = "windows")]
+        let mut appearance_setting_applied = false;
         let mut history_prune_days: Option<i64> = None;
 
         if !payload.settings.is_object() {
@@ -166,6 +168,10 @@ pub async fn import_data(
                         settings.set(key.clone(), value.clone())?;
                         if crate::app_tray::setting_updates_runtime_icons(key) {
                             runtime_icon_setting_applied = true;
+                        }
+                        #[cfg(target_os = "windows")]
+                        if key == store::APPEARANCE_MODE {
+                            appearance_setting_applied = true;
                         }
                         // Mirror save_setting's side effect: a backup that
                         // tightens history retention must prune immediately,
@@ -187,6 +193,10 @@ pub async fn import_data(
 
         if runtime_icon_setting_applied {
             crate::apply_runtime_icons(&app, None);
+        }
+        #[cfg(target_os = "windows")]
+        if appearance_setting_applied {
+            crate::system::windows_titlebar::refresh_for_app(&app);
         }
 
         if let Some(days) = history_prune_days {

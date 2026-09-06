@@ -3,7 +3,7 @@ use std::{
     os::windows::ffi::OsStrExt,
     sync::{Mutex, OnceLock},
 };
-use tauri::{Emitter, Theme, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, Theme, WebviewWindow};
 use windows::{
     core::PCSTR,
     Win32::{
@@ -165,14 +165,26 @@ fn convert(native: NativeMetrics) -> TitleBarMetrics {
     }
 }
 
-fn dark(theme: Option<Theme>) -> bool {
-    !matches!(theme, Some(Theme::Light))
+fn dark(theme: Option<Theme>, appearance_mode: Option<&str>) -> bool {
+    match appearance_mode {
+        Some("light") => false,
+        Some("dark") => true,
+        _ => !matches!(theme, Some(Theme::Light)),
+    }
+}
+
+fn resolved_dark(window: &WebviewWindow, theme: Option<Theme>) -> bool {
+    dark(
+        theme,
+        crate::app_tray::appearance_mode(window.app_handle()).as_deref(),
+    )
 }
 
 pub fn enable(window: &WebviewWindow, theme: Option<Theme>) -> Result<TitleBarMetrics, String> {
     let hwnd = window.hwnd().map_err(|e| e.to_string())?.0 as isize;
     let mut native = NativeMetrics::default();
-    let hr = unsafe { (bridge()?.enable)(hwnd, i32::from(dark(theme)), &mut native) };
+    let hr =
+        unsafe { (bridge()?.enable)(hwnd, i32::from(resolved_dark(window, theme)), &mut native) };
     if hr < 0 {
         return Err(format!(
             "AppWindowTitleBar initialization failed with HRESULT 0x{:08X}",
@@ -191,13 +203,36 @@ pub fn enable(window: &WebviewWindow, theme: Option<Theme>) -> Result<TitleBarMe
 }
 
 pub fn refresh(window: &WebviewWindow, theme: Option<Theme>) {
+    refresh_with_dark(window, resolved_dark(window, theme));
+}
+
+fn refresh_with_dark(window: &WebviewWindow, dark: bool) {
     let Ok(hwnd) = window.hwnd() else { return };
     let mut native = NativeMetrics::default();
     if let Ok(bridge) = bridge() {
-        let hr = unsafe { (bridge.update)(hwnd.0 as isize, i32::from(dark(theme)), &mut native) };
+        let hr = unsafe {
+            (bridge.update)(
+                hwnd.0 as isize,
+                i32::from(dark),
+                &mut native,
+            )
+        };
         if hr >= 0 {
             emit_if_changed(window, &native);
         }
+    }
+}
+
+/// Apply the theme the frontend is actually rendering. The native window theme
+/// can follow the OS while Verenu is explicitly set to the opposite appearance.
+#[tauri::command]
+pub fn set_native_titlebar_theme(window: WebviewWindow, dark: bool) {
+    refresh_with_dark(&window, dark);
+}
+
+pub(crate) fn refresh_for_app(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        refresh(&window, window.theme().ok());
     }
 }
 
@@ -241,7 +276,20 @@ pub fn get_native_titlebar_metrics(window: WebviewWindow) -> Result<TitleBarMetr
 
 #[cfg(test)]
 mod tests {
-    use super::NativeMetrics;
+    use super::{dark, NativeMetrics};
+
+    #[test]
+    fn explicit_appearance_overrides_system_theme() {
+        assert!(!dark(Some(tauri::Theme::Dark), Some("light")));
+        assert!(dark(Some(tauri::Theme::Light), Some("dark")));
+    }
+
+    #[test]
+    fn system_appearance_uses_native_theme() {
+        assert!(!dark(Some(tauri::Theme::Light), Some("system")));
+        assert!(dark(Some(tauri::Theme::Dark), Some("system")));
+        assert!(dark(None, None));
+    }
 
     fn metrics() -> NativeMetrics {
         let mut m = NativeMetrics::default();
