@@ -269,6 +269,8 @@ function hasTauriInternals(): boolean {
   return typeof maybeWindow.__TAURI_INTERNALS__?.invoke === 'function';
 }
 
+let devStorageFullSimulation = false;
+
 function readDevSettings(): Record<string, unknown> {
   if (typeof localStorage === 'undefined') return {};
   try {
@@ -1154,9 +1156,17 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return undefined as T;
     case 'get_setting':
       return getDevSetting(String(args?.key ?? '')) as T;
+    case 'get_storage_full_simulation':
+      return devStorageFullSimulation as T;
+    case 'set_storage_full_simulation':
+      devStorageFullSimulation = Boolean(args?.enabled);
+      return undefined as T;
     case 'save_setting':
       if (typeof args?.key !== 'string' || args.key.length === 0) {
         return undefined as T;
+      }
+      if (devStorageFullSimulation) {
+        throw new Error('STORAGE_FULL: simulated settings write failure');
       }
       writeDevSetting(args.key, args?.value);
       return undefined as T;

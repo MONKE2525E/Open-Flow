@@ -1,5 +1,8 @@
 import { invoke } from './tauri';
+import { classifyIpcError } from './errors';
 import type { TranscriptionLanguageCode } from './transcriptionLanguages';
+
+export const SETTINGS_SAVE_ERROR_EVENT = 'verenu:setting-save-error';
 
 export type ProviderId = 'groq' | 'openai' | 'google' | 'assemblyai' | 'local';
 export type ProviderModelMap = Record<ProviderId, string[]>;
@@ -78,5 +81,13 @@ type SettingsValueMap = {
 type SettingKey = keyof SettingsValueMap;
 
 export function saveSetting<K extends SettingKey>(key: K, value: SettingsValueMap[K]) {
-  return invoke('save_setting', { key, value });
+  return invoke('save_setting', { key, value }).catch((error) => {
+    const classified = classifyIpcError(error);
+    if (classified.kind === 'storage-full' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(SETTINGS_SAVE_ERROR_EVENT, {
+        detail: classified.message,
+      }));
+    }
+    throw error;
+  });
 }

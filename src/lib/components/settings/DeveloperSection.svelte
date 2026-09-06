@@ -34,6 +34,7 @@
   let simulationMessage = $state('');
   let simulatedProvider = $state<ProviderId>('groq');
   let providerDropdownOpen = $state(false);
+  let storageFullSimulation = $state(false);
   let syncEnabled = $state(false);
   let syncApprovalOpen = $state(false);
   let syncMessage = $state('');
@@ -157,6 +158,7 @@
       appStore.betaUpdatesEnabled = betaUpdates ?? false;
       syncEnabled = sync ?? false;
       appStore.syncEnabled = sync ?? false;
+      storageFullSimulation = await invoke<boolean>('get_storage_full_simulation');
     } catch (err) {
       console.error('Failed to load dev flags:', err);
     }
@@ -215,10 +217,7 @@
   async function handleForceSetupOnLaunch(value: boolean) {
     forceSetupOnLaunch = value;
     try {
-      await invoke('save_setting', {
-        key: 'force_setup_on_launch',
-        value,
-      });
+      await saveSetting('force_setup_on_launch', value);
     } catch (err) {
       forceSetupOnLaunch = !value;
       console.error('Failed to save force_setup_on_launch:', err);
@@ -244,6 +243,21 @@
     simulationMessage = 'Offline state previewed.';
   }
 
+  async function toggleStorageFullSimulation(enabled: boolean) {
+    const previous = storageFullSimulation;
+    storageFullSimulation = enabled;
+    try {
+      await invoke('set_storage_full_simulation', { enabled });
+      simulationMessage = enabled
+        ? 'Full-storage failures enabled. Try changing any setting now.'
+        : 'Full-storage failures disabled.';
+    } catch (err) {
+      storageFullSimulation = previous;
+      simulationMessage = 'Storage simulation could not be changed.';
+      console.error('set_storage_full_simulation failed:', err);
+    }
+  }
+
   async function simulateGlobalMessage() {
     appStore.globalMessageSimulation = true;
     await refreshStatusPreview('Global message previewed.');
@@ -261,6 +275,12 @@
     appStore.globalMessage = null;
     appStore.globalMessageSimulation = false;
     appStore.isOnline = true;
+    try {
+      await invoke('set_storage_full_simulation', { enabled: false });
+      storageFullSimulation = false;
+    } catch (err) {
+      console.error('clear storage simulation failed:', err);
+    }
     await refreshStatusPreview('Simulations cleared.');
   }
 
@@ -474,6 +494,13 @@
     <button class="btn-ghost" onclick={simulateGlobalMessage}>Global Message</button>
     <button class="btn-ghost" onclick={clearSimulations}>Clear</button>
   </div>
+</div>
+<div class="setting-row" data-setting-target="developer-storage-simulation">
+  <div>
+    <div class="label">Full Storage Failure</div>
+    <div class="desc">Make setting saves fail as if the drive has no free space. This resets when Verenu restarts.</div>
+  </div>
+  <Toggle checked={storageFullSimulation} onchange={toggleStorageFullSimulation} label="Simulate full storage" />
 </div>
 <div class="setting-row" data-setting-target="developer-notifications">
   <div>

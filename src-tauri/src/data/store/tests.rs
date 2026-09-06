@@ -31,6 +31,14 @@ fn write_settings_file_overwrites_existing() {
     let _ = std::fs::remove_file(&path);
 }
 
+#[test]
+fn storage_full_errors_are_recognized() {
+    assert!(is_storage_full_error("STORAGE_FULL: simulated settings write failure"));
+    assert!(is_storage_full_error("os error 112"));
+    assert!(is_storage_full_error("database or disk is full"));
+    assert!(!is_storage_full_error("permission denied"));
+}
+
 // A corrupt settings.json must not surface an error; it is backed up and the
 // app starts from empty defaults.
 #[test]
