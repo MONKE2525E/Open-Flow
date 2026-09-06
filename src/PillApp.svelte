@@ -661,10 +661,15 @@
             if (isCancelLike(state)) cancelOpen = true;
           });
           if (cancelBtnTimer) clearTimeout(cancelBtnTimer);
+          // 150ms, not 200: the undo button now only fades in (its space is
+          // reserved from the first frame — see the template), so it no
+          // longer has to wait for a width expansion to finish. Landing it
+          // just after the entrance morph keeps the "arrives second" beat
+          // without trailing the rest of the pill.
           cancelBtnTimer = setTimeout(() => {
             cancelBtnTimer = null;
             if (isCancelLike(state)) showCancelBtn = true;
-          }, 200);
+          }, 150);
           if (cancelDismissTimer) clearTimeout(cancelDismissTimer);
           cancelDismissTimer = setTimeout(() => {
             cancelDismissTimer = null;
@@ -818,8 +823,13 @@
 
   async function cancelHandless() {
     const { invoke } = await import('@tauri-apps/api/core');
-    goIdle();
-    await invoke('stop_recording').catch(() => {});
+    // Don't goIdle() here — stop_recording cancels asynchronously on the
+    // backend and may decide the capture is resumable, in which case it
+    // emits 'cancelled' (not 'idle') next. Forcing idle up front raced that
+    // later event: the pill would start fading to idle, then get yanked into
+    // the cancelled entrance mid-fade, which is what read as a teleport/
+    // flicker. Only fall back to idle if the invoke itself fails.
+    await invoke('stop_recording').catch(() => { goIdle(); });
   }
 
   async function retryFailed() {
@@ -897,6 +907,7 @@
   <div class="pill-cluster"
        class:steady-width={state === 'processing'}
        class:steady-width-hf={state === 'handsfree'}
+       class:steady-width-cancel={isCancelLike(state)}
        bind:this={clusterEl}>
   {#if contextLabel && (state === 'recording' || state === 'processing' || state === 'handsfree' || state === 'loading_local_model')}
       <span class="pill-context" title={contextLabel}>{contextLabel}</span>
@@ -975,20 +986,34 @@
     </div>
 
   {:else if isCancelLike(state)}
-    <div class="pill cancelled" class:interrupted={state === 'interrupted'} class:cancel-open={cancelOpen} class:dying={dying}>
+    <div class="pill cancelled"
+         class:interrupted={state === 'interrupted'}
+         class:cancel-open={cancelOpen}
+         class:dying={dying}
+         class:from-rec={prevState === 'recording'}
+         class:from-hf={prevState === 'handsfree'}>
       <button class="hf-btn cancel" onclick={dismissCancelled} aria-label="Dismiss">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
           <path d="M6 6l12 12M6 18 18 6"/>
         </svg>
       </button>
       <span class="cancel-text">{state === 'interrupted' ? 'Interrupted' : 'Cancelled'}</span>
-      {#if showCancelBtn}
-        <button class="hf-btn confirm" onclick={continueCancelled} aria-label="Undo — keep recording">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/>
-          </svg>
-        </button>
-      {/if}
+      <!-- Always mounted, not `{#if showCancelBtn}` — this button reserves its
+           flex space from the first frame of cancel-open so .cancel-text
+           (flex:1) never has to reflow when it appears. Mounting it 200ms
+           into the width/text transition popped a new item into the row
+           mid-flight, which instantly stole space from the already-fading-in
+           text and read as it "shifting around before settling". Fading
+           opacity in-place keeps the staggered-arrival feel without the
+           layout shift. `disabled`/`tabindex`/`aria-hidden` keep it out of
+           the tab order and the a11y tree while invisible — opacity+
+           pointer-events alone hide it visually but a keyboard user could
+           still Tab to and activate it before the reveal. -->
+      <button class="hf-btn confirm" class:btn-visible={showCancelBtn} disabled={!showCancelBtn} tabindex={showCancelBtn ? 0 : -1} aria-hidden={!showCancelBtn} onclick={continueCancelled} aria-label="Undo — keep recording">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/>
+        </svg>
+      </button>
     </div>
 
   {:else if state === 'paste_failed'}
@@ -1163,6 +1188,20 @@
   .pill-cluster.steady-width-hf {
     min-width: var(--hf-expanded-w, 132px);
   }
+  /* Same lock for the cancelled/interrupted toast. Its pill has one fixed
+     width, but the entrance morph animates into it from the previous pill's
+     (narrower) width — and without a lock the ResizeObserver chased that
+     animation frame by frame, issuing a native SetWindowPos per frame, which
+     is the documented cause of WebView2 presenting stale/clipped frames
+     mid-morph. Locking the cluster means the window is sized once, before
+     the morph starts, and never moves during it.
+
+     172px (the wider "Interrupted" variant) covers both: at PILL_STEP_W=24
+     quantization, 158px and 172px round up to the same 192px window, so
+     using the max costs nothing and avoids threading the variant down. */
+  .pill-cluster.steady-width-cancel {
+    min-width: 172px;
+  }
   /* Resolved context, shown as a small floating tag above the pill so the
      dictation's destination stays legible without crowding or offsetting
      the pill capsule itself. Fades in softly so its appearance
@@ -1182,7 +1221,6 @@
     max-width: 180px;
     overflow: hidden;
     text-overflow: ellipsis;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.35);
     animation: chipIn 0.18s ease-out both;
   }
   @keyframes chipIn {
@@ -1593,27 +1631,66 @@
   }
   .hf-btn.err-dismiss:hover { opacity: 1; background: rgba(255,255,255,0.14); }
 
-  /* Cancelled: neutral stadium pill (not the red error palette) — starts as
-     a dismiss (X) button only, expands to reveal the "Cancelled" label and
-     an Undo button that resumes recording hands-free with the cancelled
-     audio prepended. Both buttons are real, clickable controls (not status
-     icons) — dismiss discards the capture for good, Undo keeps it going. */
+  /* Cancelled: neutral stadium pill (not the red error palette) — a dismiss
+     (X) button, the "Cancelled" label, and an Undo button that resumes
+     recording hands-free with the cancelled audio prepended. Both buttons
+     are real, clickable controls (not status icons) — dismiss discards the
+     capture for good, Undo keeps it going. The pill arrives at full size and
+     staggers its contents in by opacity; only the label and Undo are
+     sequenced, never the layout. */
+  /* One fixed width, reached by the entrance morph below and never changed
+     again. This used to start collapsed at 42px and expand to 158px on
+     `cancel-open`, via a `transition: width` — which fought the entrance
+     `animation` on the same property. An animation overrides a transition
+     while it runs, so the pill shrank under the animation for 240ms, then
+     control snapped back to the transition (already most of the way to
+     158px) the instant the animation ended. That mid-flight snap, plus a
+     width that moved in three directions in ~300ms (bars-width -> 42 ->
+     158) and a padding shift underneath it, is what read as the contents
+     shifting around before settling. Now width moves exactly once, in one
+     direction, and only opacity is staggered. */
   .pill.cancelled {
-    width: 42px;
+    width: 158px;
     gap: 8px;
-    padding: 0 12px;
+    padding: 0 8px;
     border-radius: 999px;
     overflow: hidden;
-    /* No overshoot — see .pill.error's transition comment. */
-    transition: width 0.26s cubic-bezier(0.22, 1, 0.36, 1),
-                padding 0.26s cubic-bezier(0.22, 1, 0.36, 1);
   }
-  .pill.cancelled.cancel-open {
-    width: 158px;
-    padding: 0 8px;
+  /* Recording/handsfree→cancelled: without this the bars pill hard-cuts to
+     the toast and a fresh pillIn bounce plays on top — the teleport this
+     fixes. Growing from the previous pill's own width instead (72px
+     recording / 112px expanded handsfree, both narrower than the toast)
+     makes it read as one continuous capsule widening into the message,
+     same trick as processing's from-rec/from-hf. Only
+     `from` is set — the animation's own end value falls back to
+     `.pill.cancelled`'s own width (158px, or 172px when interrupted), so it
+     doesn't need repeating here and stays correct for both variants. */
+  .pill.cancelled.from-rec {
+    animation: cancelFromRec 0.24s cubic-bezier(0.22, 1, 0.36, 1) backwards,
+               pillIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   }
-  .pill.cancelled.interrupted.cancel-open {
+  @keyframes cancelFromRec {
+    from { width: calc(12 * var(--bar-w, 3px) + 11 * var(--bar-gap, 2px) + 14px); }
+  }
+  .pill.cancelled.from-hf {
+    animation: cancelFromHf 0.24s cubic-bezier(0.22, 1, 0.36, 1) backwards,
+               pillIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  @keyframes cancelFromHf {
+    /* handsfree's Cancel button is only reachable once it's expanded, so
+       start from the expanded width, not the collapsed one. */
+    from { width: calc(12 * var(--bar-w, 3px) + 11 * var(--bar-gap, 2px) + 54px); }
+  }
+  /* "Interrupted" is a longer word — same single fixed width treatment. */
+  .pill.cancelled.interrupted {
     width: 172px;
+  }
+  /* Same specificity guard as processing's from-rec/from-hf.dying override:
+     if the capture is dismissed before the entrance morph finishes, the exit
+     fade must win over the higher-specificity from-rec/from-hf rule above. */
+  .pill.cancelled.from-rec.dying,
+  .pill.cancelled.from-hf.dying {
+    animation: pillOut 0.18s cubic-bezier(0.4, 0, 1, 1) both;
   }
   .cancel-text {
     font-size: 11.5px; font-weight: 500;
@@ -1621,9 +1698,25 @@
     opacity: 0;
     flex: 1;
     text-align: center;
-    transition: opacity 0.18s ease 0.08s;
+    /* Settles at ~225ms, just inside the 240ms entrance morph, so the label
+       finishes arriving as the capsule stops moving rather than after it. */
+    transition: opacity 0.16s ease 0.05s;
   }
   .pill.cancelled.cancel-open .cancel-text { opacity: 1; }
+  /* Overrides the generic .hf-btn.confirm mount animation (hfBtnIn, below) —
+     this button is always in the DOM here (see the template comment), so it
+     needs its own opacity switch instead of an entrance animation that would
+     autoplay the moment the cancelled pill mounts, before the stagger delay. */
+  .pill.cancelled .hf-btn.confirm {
+    animation: none;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease;
+  }
+  .pill.cancelled .hf-btn.confirm.btn-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
 
   /* Paste failed: same red-tinted stadium pill as .pill.error, message-first
      (no collapsed-icon entry — the message is a fixed short string, not a

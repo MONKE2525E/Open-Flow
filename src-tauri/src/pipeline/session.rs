@@ -414,6 +414,12 @@ pub fn stash_cancelled_capture(
                     CaptureOrigin::UserCancelled => super::failover::FailoverKind::Cancelled,
                     CaptureOrigin::Interrupted => super::failover::FailoverKind::Recording,
                 };
+                // Captured before dropping the lock: this is the original
+                // dictation's focus target, still valid here because nothing
+                // has happened yet to move focus to Verenu's own window. See
+                // CancelledCapture::target for why resume must reuse it
+                // instead of re-capturing the foreground later.
+                let target = st.target;
                 // Drop the state lock before disk I/O so hotkey/UI paths are
                 // not stalled on fsync.
                 drop(st);
@@ -425,6 +431,7 @@ pub fn stash_cancelled_capture(
                     origin,
                     created_at_rfc3339: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
                     started_at_unix,
+                    target,
                 };
                 match lock_state(state) {
                     Ok(mut st) => {

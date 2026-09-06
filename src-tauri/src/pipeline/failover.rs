@@ -4,6 +4,7 @@
 //! sidecar. The sidecar `sample_count` is published only after the matching
 //! PCM bytes have been flushed, and load clamps to the shorter of the two.
 
+use crate::core::window_geometry::WindowTarget;
 use super::gates::{MIN_RECORDING_MS, MIN_RECORDING_RMS};
 use super::pill::{show_cancelled_pill, show_interrupted_pill};
 use super::state::{
@@ -378,6 +379,11 @@ fn loaded_to_capture(take: LoadedTake) -> Option<CancelledCapture> {
         origin,
         created_at_rfc3339,
         started_at_unix,
+        // Recovered after a crash/restart, so there is no live foreground
+        // window to reuse — the watchdog's resume goes through the same
+        // resume_cancelled_capture path, which re-captures the (now current)
+        // foreground window whenever the stored target is the zero default.
+        target: WindowTarget::default(),
     })
 }
 
