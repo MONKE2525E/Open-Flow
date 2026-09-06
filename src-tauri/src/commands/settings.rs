@@ -32,6 +32,7 @@ enum SettingKind {
     SoundEffectsVolume,
     AppMappings,
     Hotkey,
+    RepairHotkey,
     ClipboardPhrase,
 }
 
@@ -122,6 +123,7 @@ const SETTING_SPECS: &[SettingSpec] = &[
     ),
     setting_spec(store::CLEANUP_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::HOTKEY, SettingKind::Hotkey, true, true),
+    setting_spec(store::REPAIR_HOTKEY, SettingKind::RepairHotkey, true, true),
     setting_spec(
         store::MICROPHONE_DEVICE,
         SettingKind::StringOrNull,
@@ -405,6 +407,20 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
                     second.is_empty() || crate::core::hotkey::is_known_key_code(second)
                 })
         }),
+        // Two modifiers + one regular trigger key (default Ctrl+Alt+Z) — see
+        // core::hotkey::win's REPAIR_MOD1 doc comment for why a modifier-only
+        // combo isn't allowed. Unlike the main hotkey, all three slots empty
+        // is also valid: it disables the feature rather than requiring one
+        // be bound (the built-in Ctrl+Alt+Z default needs no setting saved).
+        SettingKind::RepairHotkey => value.as_array().is_some_and(|keys| {
+            keys.len() == 3
+                && keys.iter().all(serde_json::Value::is_string)
+                && (keys.iter().all(|k| k.as_str() == Some(""))
+                    || keys.iter().all(|k| {
+                        k.as_str()
+                            .is_some_and(crate::core::hotkey::is_known_key_code)
+                    }))
+        }),
     };
 
     if valid {
@@ -528,6 +544,14 @@ pub async fn save_setting(
     if crate::app_tray::setting_updates_runtime_icons(&key) {
         crate::apply_runtime_icons(&app, None);
     }
+    #[cfg(target_os = "windows")]
+    if key == store::APPEARANCE_MODE {
+        crate::system::windows_titlebar::refresh_for_app(&app);
+    }
+    #[cfg(target_os = "windows")]
+    if key == store::APPEARANCE_MODE {
+        crate::system::windows_titlebar::refresh_for_app(&app);
+    }
     if let Some(volume) = sound_effects_volume {
         crate::media::sound::set_volume(volume);
     }
@@ -597,6 +621,7 @@ pub struct AllSettings {
     pub beta_updates_enabled: Option<bool>,
     pub verenu_service_checks_enabled: Option<bool>,
     pub hotkey: Option<Vec<String>>,
+    pub repair_hotkey: Option<Vec<String>>,
     pub appearance_mode: Option<String>,
     pub accent_color: Option<String>,
     pub cleanup_prompt_override: Option<String>,
@@ -667,6 +692,13 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         beta_updates_enabled: bool_val(store::BETA_UPDATES_ENABLED),
         verenu_service_checks_enabled: bool_val(store::VERENU_SERVICE_CHECKS_ENABLED),
         hotkey: s.get(store::HOTKEY).and_then(|v| {
+            v.as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
+        }),
+        repair_hotkey: s.get(store::REPAIR_HOTKEY).and_then(|v| {
             v.as_array().map(|arr| {
                 arr.iter()
                     .filter_map(|x| x.as_str().map(String::from))
