@@ -12,8 +12,8 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $iconDir = Join-Path $repoRoot 'src-tauri\icons'
 $sourceSvg = Join-Path $iconDir 'verenu-mark.svg'
 $generatedRust = Join-Path $repoRoot 'src-tauri\src\generated_icon_geometry.rs'
-$accent = '#d97757'
-$lightTile = '#f9f7f3'
+$foreground = '#ffffff'
+$background = '#000000'
 
 function Read-CanonicalMark($path) {
   $content = Get-Content $path -Raw
@@ -79,7 +79,7 @@ function New-IconBitmap($size, $rects, $presentation) {
 
   $tilePath = New-Object System.Drawing.Drawing2D.GraphicsPath
   Add-RoundedRect $tilePath ($tileX * $scaleToSs) ($tileY * $scaleToSs) ($tileSize * $scaleToSs) ($tileSize * $scaleToSs) ($tileRadius * $scaleToSs)
-  $tileBrush = [System.Drawing.SolidBrush]::new((Convert-HexColor $lightTile))
+  $tileBrush = [System.Drawing.SolidBrush]::new((Convert-HexColor $background))
   $g.FillPath($tileBrush, $tilePath)
   $tileBrush.Dispose(); $tilePath.Dispose()
 
@@ -87,7 +87,7 @@ function New-IconBitmap($size, $rects, $presentation) {
   $glyphHeight = 208.0 * $canonicalScale
   $originX = ($ss - (254.0 * $canonicalScale)) / 2.0
   $originY = ($ss - $glyphHeight) / 2.0
-  $barBrush = [System.Drawing.SolidBrush]::new((Convert-HexColor $accent))
+  $barBrush = [System.Drawing.SolidBrush]::new((Convert-HexColor $foreground))
   foreach ($rect in $rects) {
     $path = New-Object System.Drawing.Drawing2D.GraphicsPath
     Add-RoundedRect $path `

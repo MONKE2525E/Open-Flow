@@ -4,6 +4,7 @@ Notable project changes are recorded here. GitHub Release pages remain the sourc
 
 ## Unreleased
 
+- Removed orange from the native and packaged app icons. Runtime icons now use a pure black-and-white pair that follows light and dark appearance modes instead of the selected accent color.
 - Fixed hands-free conversion from an active hold-to-talk dictation ending when
   the original Windows modifier chord is released; stale release events now
   have a three-second handoff window before hands-free stop gestures are
