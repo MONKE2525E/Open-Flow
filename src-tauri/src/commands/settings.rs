@@ -548,10 +548,6 @@ pub async fn save_setting(
     if key == store::APPEARANCE_MODE {
         crate::system::windows_titlebar::refresh_for_app(&app);
     }
-    #[cfg(target_os = "windows")]
-    if key == store::APPEARANCE_MODE {
-        crate::system::windows_titlebar::refresh_for_app(&app);
-    }
     if let Some(volume) = sound_effects_volume {
         crate::media::sound::set_volume(volume);
     }

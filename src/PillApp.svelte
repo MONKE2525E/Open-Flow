@@ -1221,7 +1221,10 @@
   .pill.paste-failed.dying,
   .pill.copied.dying,
   .pill.processing.dying,
-  .pill.loading-local.dying,
+  .pill.loading-local.dying {
+    animation: pillOut 0.18s cubic-bezier(0.4, 0, 1, 1) both;
+    pointer-events: none;
+  }
 
   /* Skip entry animation for seamless continuations from recording */
   .pill.no-anim { animation: none; }
