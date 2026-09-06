@@ -43,14 +43,14 @@
     position: relative;
     height: 6px;
     border-radius: 999px;
-    /* Fixed terracotta scale so the legend stays orange regardless of the
-       user's chosen accent (and of the neutral default jap tokens). Deep =
-       accuracy (left), light = efficiency (right). */
+    /* Use the accent scale so this legend follows the selected accent,
+       including the adaptive black/white defaults. Deep = accuracy (left),
+       light = efficiency (right). */
     background: linear-gradient(
       to right,
-      #c44632 0%,
-      #d97757 50%,
-      #f0cbb8 100%
+      var(--jap-600) 0%,
+      var(--jap-400) 50%,
+      var(--jap-200) 100%
     );
   }
 
@@ -61,7 +61,7 @@
     height: 12px;
     border-radius: 50%;
     background: var(--bg-elev);
-    border: 2px solid #a3352b;
+    border: 2px solid var(--jap-700);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
     transform: translate(-50%, -50%);
     transition-property: left;
