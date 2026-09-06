@@ -69,11 +69,22 @@
   --control-hover: #f2f2f1;
   --control-active: #ebeae7;
 
-  --pill-bg: var(--arm-950);
-  --pill-fg: #ffffff;
-  --pill-bar: #ffffff;
-  --pill-muted: rgba(255, 255, 255, 0.45);
-  --pill-muted-strong: rgba(255, 255, 255, 0.85);
+  --pill-bg: #ffffff;
+  --pill-fg: #111110;
+  --pill-bar: #111110;
+  --pill-muted: rgba(17, 17, 16, 0.45);
+  --pill-muted-strong: rgba(17, 17, 16, 0.85);
+  --pill-line: rgba(17, 17, 16, 0.12);
+  --pill-hover: rgba(17, 17, 16, 0.10);
+  --pill-spinner-track: rgba(17, 17, 16, 0.16);
+  --pill-shine-clear: rgba(17, 17, 16, 0);
+  --pill-shine-mid: rgba(17, 17, 16, 0.5);
+  --pill-shine-strong: #111110;
+  --pill-stage-size: 10.5px;
+  --pill-stage-weight: 600;
+  --pill-context-bg: var(--pill-bg);
+  --pill-context-fg: rgba(17, 17, 16, 0.72);
+  --pill-context-line: rgba(17, 17, 16, 0.13);
 
   /* Error pill is always dark red-tinted, regardless of theme — matches the
      dark-theme --danger/--danger-bg/--danger-line so the pill and in-app
@@ -185,4 +196,17 @@
   --pill-bg: #0f0e0e;
   --pill-fg: #ffffff;
   --pill-bar: #ffffff;
+  --pill-muted: rgba(255, 255, 255, 0.45);
+  --pill-muted-strong: rgba(255, 255, 255, 0.85);
+  --pill-line: rgba(255, 255, 255, 0.07);
+  --pill-hover: rgba(255, 255, 255, 0.14);
+  --pill-spinner-track: rgba(255, 255, 255, 0.16);
+  --pill-shine-clear: rgba(255, 255, 255, 0);
+  --pill-shine-mid: rgba(255, 255, 255, 0.5);
+  --pill-shine-strong: #ffffff;
+  --pill-stage-size: 11px;
+  --pill-stage-weight: 600;
+  --pill-context-bg: var(--pill-bg);
+  --pill-context-fg: rgba(255, 255, 255, 0.72);
+  --pill-context-line: rgba(255, 255, 255, 0.08);
 }
