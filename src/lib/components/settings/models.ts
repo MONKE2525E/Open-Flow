@@ -157,10 +157,14 @@ export const recommendedModels = buildRecommended(CATALOG);
 
 export function migrateDeprecatedGroqCleanupModel(model: string): string {
   const normalized = model.trim();
-  if (normalized === DEPRECATED_GROQ_LLAMA_8B_MODEL) return GROQ_QWEN_3_6_27B_MODEL;
-  if (normalized === DEPRECATED_GROQ_LLAMA_70B_MODEL) return GROQ_QWEN_3_6_27B_MODEL;
-  if (normalized === GROQ_GPT_OSS_20B_MODEL || normalized === 'openai/gpt-oss-120b') {
-    return GROQ_QWEN_3_6_27B_MODEL;
+  if (
+    normalized === DEPRECATED_GROQ_LLAMA_8B_MODEL
+    || normalized === DEPRECATED_GROQ_LLAMA_70B_MODEL
+    || normalized === GROQ_GPT_OSS_20B_MODEL
+    || normalized === 'openai/gpt-oss-120b'
+    || normalized === GROQ_QWEN_3_6_27B_MODEL
+  ) {
+    return GROQ_QWEN_3_8_27B_MODEL;
   }
   return normalized;
 }

@@ -75,10 +75,11 @@ describe('catalogFor', () => {
     expect(migrateDeprecatedGoogleModel('gemini-3.5-flash')).toBe('gemini-3.5-flash');
   });
 
-  it('migrates Groq reasoning-only cleanup models to no-thinking Qwen', () => {
-    expect(migrateDeprecatedGroqCleanupModel('llama-3.1-8b-instant')).toBe('qwen/qwen3.6-27b');
-    expect(migrateDeprecatedGroqCleanupModel('openai/gpt-oss-20b')).toBe('qwen/qwen3.6-27b');
-    expect(migrateDeprecatedGroqCleanupModel('openai/gpt-oss-120b')).toBe('qwen/qwen3.6-27b');
+  it('migrates deprecated Groq cleanup models to Qwen 3.8', () => {
+    expect(migrateDeprecatedGroqCleanupModel('llama-3.1-8b-instant')).toBe('qwen/qwen3.8-27b');
+    expect(migrateDeprecatedGroqCleanupModel('openai/gpt-oss-20b')).toBe('qwen/qwen3.8-27b');
+    expect(migrateDeprecatedGroqCleanupModel('openai/gpt-oss-120b')).toBe('qwen/qwen3.8-27b');
+    expect(migrateDeprecatedGroqCleanupModel('qwen/qwen3.6-27b')).toBe('qwen/qwen3.8-27b');
   });
 });
 

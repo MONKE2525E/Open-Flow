@@ -80,7 +80,7 @@
   let cleanupModelsByProvider = $state<ProviderModelMap>(emptyProviderModelMap());
 
   let transcriptionDefaultModel = $state('groq/whisper-large-v3-turbo');
-  let cleanupDefaultModel = $state('groq/qwen/qwen3.6-27b');
+  let cleanupDefaultModel = $state('groq/qwen/qwen3.8-27b');
   let transcriptionFallbackModels = $state<string[]>([]);
   let dualTranscriptionEnabled = $state(false);
   let cleanupFallbackModels = $state<string[]>([]);
@@ -560,7 +560,7 @@
       : 'groq/whisper-large-v3-turbo';
     const legacyCleanup = rawLegacyCleanup
       ? (rawLegacyCleanup.includes('/') ? rawLegacyCleanup : `groq/${rawLegacyCleanup}`)
-      : 'groq/qwen/qwen3.6-27b';
+      : 'groq/qwen/qwen3.8-27b';
 
     transcriptionDefaultModel = migrateDeprecatedGoogleModel(all.transcription_default_model ?? legacyTranscription);
     cleanupDefaultModel = migrateDeprecatedGoogleModel(all.cleanup_default_model ?? legacyCleanup);

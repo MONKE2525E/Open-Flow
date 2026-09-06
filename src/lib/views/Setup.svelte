@@ -213,7 +213,7 @@
 
   function cleanupModelsByProvider(...selected: string[]): ProviderModelMap {
     const map: ProviderModelMap = {
-      groq: ['qwen/qwen3.6-27b', 'openai/gpt-oss-20b'],
+      groq: ['qwen/qwen3.8-27b', 'openai/gpt-oss-20b'],
       openai: ['gpt-4o-mini', 'gpt-4o'],
       google: ['gemini-2.5-flash'],
       assemblyai: [],
@@ -246,7 +246,7 @@
         ? 'openai/gpt-4o-mini'
         : provider === 'google'
           ? 'google/gemini-2.5-flash'
-          : 'groq/qwen/qwen3.6-27b';
+          : 'groq/qwen/qwen3.8-27b';
 
     // The Models step is the more specific answer, so its target wins over the
     // provider-derived defaults whenever one was chosen.
