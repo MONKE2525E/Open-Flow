@@ -32,6 +32,13 @@ enum HotkeyEvent {
 /// interrupt the transcription that the first click just started.
 const HANDSFREE_STOP_GUARD: Duration = Duration::from_millis(350);
 
+/// Space can convert a hold-to-talk recording into hands-free while the
+/// original chord is still physically held. Windows can report one of that
+/// chord's release events after the Space toggle has already reached the
+/// async dispatcher, so give the conversion a short handoff window in which
+/// release/cancel events cannot stop the new hands-free recording.
+const HANDSFREE_CONVERSION_GUARD: Duration = Duration::from_secs(3);
+
 #[derive(Default)]
 struct HandsfreeStopGuard {
     until: Option<Instant>,
@@ -57,6 +64,32 @@ impl HandsfreeStopGuard {
                 | HotkeyEvent::HandlessToggle
                 | HotkeyEvent::Cancel
         )
+    }
+}
+
+#[derive(Default)]
+struct HandsfreeConversionGuard {
+    until: Option<Instant>,
+}
+
+impl HandsfreeConversionGuard {
+    fn arm(&mut self, now: Instant) {
+        self.until = Some(now + HANDSFREE_CONVERSION_GUARD);
+    }
+
+    fn expired(&self, now: Instant) -> bool {
+        self.until.is_some_and(|until| now >= until)
+    }
+
+    fn suppresses(&mut self, event: HotkeyEvent, now: Instant) -> bool {
+        let Some(until) = self.until else {
+            return false;
+        };
+        if now >= until {
+            self.until = None;
+            return false;
+        }
+        matches!(event, HotkeyEvent::Release | HotkeyEvent::Cancel)
     }
 }
 
@@ -115,8 +148,23 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
 
     tauri::async_runtime::spawn(async move {
         let mut handsfree_stop_guard = HandsfreeStopGuard::default();
+        let mut handsfree_conversion_guard = HandsfreeConversionGuard::default();
         while let Some(event) = hotkey_rx.recv().await {
-            if handsfree_stop_guard.suppresses(event, Instant::now()) {
+            let now = Instant::now();
+            if handsfree_conversion_guard.expired(now) {
+                // Once the handoff window has elapsed, the next genuine
+                // hands-free stop must not be mistaken for the original hold
+                // release by the lifecycle marker.
+                pipeline::clear_handless_hold_marker(&state_hk);
+            }
+            if handsfree_conversion_guard.suppresses(event, now) {
+                // This event belongs to the chord that was converted by
+                // Space, not to a new hands-free stop gesture.
+                pipeline::clear_handless_hold_marker(&state_hk);
+                log::debug!("hotkey: ignored stale input after Space hands-free conversion");
+                continue;
+            }
+            if handsfree_stop_guard.suppresses(event, now) {
                 log::debug!("hotkey: ignored follow-up input after hands-free stop");
                 continue;
             }
@@ -218,6 +266,7 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                         // Space converts an active hold-to-talk recording in
                         // place. The existing session stays open, and the
                         // hook suppresses the original chord release.
+                        handsfree_conversion_guard.arm(Instant::now());
                         crate::core::hotkey::set_handless_active(true);
                         pipeline::update_pill_state(&app_hk, "handsfree");
                     } else if !has_session && pipeline::reserve_starting(&state_hk).is_ok() {
@@ -420,5 +469,30 @@ mod tests {
             HotkeyEvent::Press,
             now + HANDSFREE_STOP_GUARD + Duration::from_millis(2),
         ));
+    }
+
+    #[test]
+    fn handsfree_conversion_guard_swallows_stale_stop_events_for_three_seconds() {
+        let now = Instant::now();
+        let mut guard = HandsfreeConversionGuard::default();
+        guard.arm(now);
+
+        assert!(guard.suppresses(HotkeyEvent::Release, now + Duration::from_secs(1)));
+        assert!(guard.suppresses(HotkeyEvent::Cancel, now + Duration::from_secs(2)));
+        assert!(!guard.suppresses(
+            HotkeyEvent::Cancel,
+            now + HANDSFREE_CONVERSION_GUARD + Duration::from_millis(1),
+        ));
+    }
+
+    #[test]
+    fn handsfree_conversion_guard_does_not_block_escape_or_toggle_events() {
+        let now = Instant::now();
+        let mut guard = HandsfreeConversionGuard::default();
+        guard.arm(now);
+
+        assert!(!guard.suppresses(HotkeyEvent::EscapeCancel, now + Duration::from_millis(1)));
+        assert!(!guard.suppresses(HotkeyEvent::HandlessToggle, now + Duration::from_millis(1)));
+        assert!(!guard.suppresses(HotkeyEvent::CopyLast, now + Duration::from_millis(1)));
     }
 }
