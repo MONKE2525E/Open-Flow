@@ -1,0 +1,58 @@
+node_modules/
+dist/
+src-tauri/gen/
+
+# Build artifacts — never track the Rust build tree. Release installers are
+# kept under /installers (and attached to GitHub Releases); the raw build
+# output below stays untracked.
+src-tauri/target/
+
+# Generated screenshots
+screenshot*.png
+setup_step*.png
+tmp-screenshots/
+
+# Environment & secrets
+.env
+.env.local
+
+# Editor & OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+*.tmp
+
+# Logs
+*.log
+
+# Test files - audio clip provided separately, not committed
+tests/smoke/*.wav
+tests/__pycache__/
+test-results/
+
+# AI Agent workspace
+.claude/
+.loop_state.json
+
+# Guardrail: never track nested worktree folders if someone creates them in-repo
+agent-worktrees/
+
+
+# Local reusable worktree slots
+worktrees/
+
+# Multi-agent workflow docs (local-only)
+Agent-Skills/Multi_Agent_Parallel.md
+Agent-Skills/templates/
+# In-repo reusable worktree slots
+worktrees/worktree-1/
+worktrees/worktree-2/
+worktrees/worktree-3/
+

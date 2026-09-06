@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIconFile</key>
+	<string>icon</string>
+	<key>CFBundleDisplayName</key>
+	<string>Verenu</string>
+	<key>CFBundleName</key>
+	<string>Verenu</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.verenu.app</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Verenu uses the microphone to transcribe your dictation into text.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Verenu discovers and syncs with your devices on the local network.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_verenu._tcp</string>
+	</array>
+</dict>
+</plist>

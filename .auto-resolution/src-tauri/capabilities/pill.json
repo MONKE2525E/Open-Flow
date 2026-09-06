@@ -1,0 +1,13 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/schema/capabilities.schema.json",
+  "identifier": "pill",
+  "description": "Minimal permissions for the floating dictation pill",
+  "windows": ["pill"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:window:allow-start-dragging"
+  ]
+}

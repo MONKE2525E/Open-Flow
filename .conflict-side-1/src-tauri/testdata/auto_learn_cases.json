@@ -1,0 +1,93 @@
+[
+  {
+    "name": "technical brand qroq from rock",
+    "original": "bran rock hosting",
+    "corrected": "bran qroq hosting",
+    "expect": [["rock", "qroq"]],
+    "promotion_sessions": 2
+  },
+  {
+    "name": "technical brand qroq from rot",
+    "original": "bran rot hosting",
+    "corrected": "bran qroq hosting",
+    "expect": [["rot", "qroq"]],
+    "promotion_sessions": 2
+  },
+  {
+    "name": "kubernetes misspelling",
+    "original": "please use Koobernetes today",
+    "corrected": "please use Kubernetes today",
+    "expect": [["Koobernetes", "Kubernetes"]],
+    "promotion_sessions": 2
+  },
+  {
+    "name": "suffix completion noise",
+    "original": "bran rot hostin",
+    "corrected": "bran rot hosting",
+    "expect": [],
+    "promotion_sessions": null
+  },
+  {
+    "name": "repeated vowel typing noise",
+    "original": "say nugga",
+    "corrected": "say nuggaaaa",
+    "expect": [],
+    "promotion_sessions": null
+  },
+  {
+    "name": "common word swap",
+    "original": "the thing is good",
+    "corrected": "is thing is good",
+    "expect": [],
+    "promotion_sessions": null
+  },
+  {
+    "name": "one letter source junk",
+    "original": "use x hosting",
+    "corrected": "use qroq hosting",
+    "expect": [],
+    "promotion_sessions": null
+  },
+  {
+    "name": "one letter target junk",
+    "original": "use rock hosting",
+    "corrected": "use q hosting",
+    "expect": [],
+    "promotion_sessions": null
+  },
+  {
+    "name": "case only change",
+    "original": "ask me later",
+    "corrected": "Ask me later",
+    "expect": [],
+    "promotion_sessions": null
+  },
+  {
+    "name": "sentence rewrite",
+    "original": "please use Koobernetes in the deployment tomorrow",
+    "corrected": "rewrite this whole sentence into something else",
+    "expect": [],
+    "promotion_sessions": null
+  },
+  {
+    "name": "near homophone should not promote",
+    "original": "their deployment passed",
+    "corrected": "there deployment passed",
+    "expect": [],
+    "promotion_sessions": null
+  },
+  {
+    "name": "ambiguous short common swap rejected",
+    "original": "we can ship this now",
+    "corrected": "we can shop this now",
+    "expect": [],
+    "promotion_sessions": null
+  },
+  {
+    "name": "brand typo with numbers promotes",
+    "original": "please open vsc0de now",
+    "corrected": "please open vscode now",
+    "expect": [["vsc0de", "vscode"]],
+    "promotion_sessions": 1
+  }
+]

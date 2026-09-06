@@ -1,0 +1,55 @@
+name: Feature request
+description: Suggest an improvement for Verenu
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for concrete product or developer-experience improvements. Do not include private dictated text, API keys, screenshots with private content, or local machine details.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What pain or limitation does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior you want.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Dictation pipeline
+        - Cleanup and prompts
+        - Dictionary
+        - Snippets
+        - App mappings
+        - Settings
+        - Privacy or data handling
+        - Installers or updater
+        - Tests or developer tooling
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: tradeoffs
+    attributes:
+      label: Tradeoffs or risks
+      description: Call out privacy, memory, provider cost, platform, or compatibility concerns if you can.
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: I checked the roadmap and this does not obviously duplicate planned work.
+        - label: I did not include private data, API keys, or screenshots with private content.
+          required: true

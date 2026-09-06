@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Verenu Development",
+  "identifier": "com.verenu.app.dev",
+  "bundle": {
+    "macOS": {
+      "bundleName": "Verenu Development"
+    }
+  }
+}

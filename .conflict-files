@@ -1,0 +1,3 @@
+ancestorEntries = ["docs/CHANGELOG.md"]
+ourEntries = ["docs/CHANGELOG.md"]
+theirEntries = ["docs/CHANGELOG.md"]

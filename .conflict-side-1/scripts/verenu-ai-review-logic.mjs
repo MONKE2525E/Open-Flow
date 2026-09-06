@@ -1,0 +1,108 @@
+export const DEFAULT_MODEL = "gemini-3.7-flash-high";
+export const DEFAULT_FALLBACK_MODEL = "claude-sonnet-4-6";
+
+const LEGACY_MODEL_ALIASES = new Map([
+  ["gemini-3.6-flash-high", DEFAULT_MODEL],
+  ["claude-sonnet-4.6", DEFAULT_FALLBACK_MODEL],
+]);
+
+const FALLBACK_ERROR_PATTERNS = [
+  /\b(?:model|engine)\b.{0,60}\b(?:not found|not available|unavailable|does not exist|unknown)\b/is,
+  /\b(?:not found|not available|unavailable|does not exist|unknown)\b.{0,60}\b(?:model|engine)\b/is,
+  /\bno available (?:model|engine)\b/i,
+];
+const SAFE_FAILURE_REASONS = new Set(["quota", "rate_limit", "model_unavailable", "preview_failed", "review_failed", "setup_failed", "provider_not_configured"]);
+
+export function normalizeReviewModel(model, defaultModel) {
+  const configuredModel = String(model ?? "").trim();
+  return LEGACY_MODEL_ALIASES.get(configuredModel) || configuredModel || defaultModel;
+}
+
+export function selectReviewModels({
+  apiKey,
+  primaryModel = DEFAULT_MODEL,
+  fallbackModel = DEFAULT_FALLBACK_MODEL,
+  additions = 0,
+  deletions = 0,
+} = {}) {
+  if (!String(apiKey ?? '').trim()) return null;
+
+  const models = [...new Set([
+    normalizeReviewModel(primaryModel, DEFAULT_MODEL),
+    normalizeReviewModel(fallbackModel, DEFAULT_FALLBACK_MODEL),
+  ].filter(Boolean))];
+  if (models.length === 0) return null;
+
+  const additionCount = Number(additions);
+  const deletionCount = Number(deletions);
+
+  return {
+    model: models[0],
+    fallbackModel: models[1] || null,
+    models,
+    changedLines: (Number.isFinite(additionCount) ? additionCount : 0) + (Number.isFinite(deletionCount) ? deletionCount : 0),
+  };
+}
+
+export function fallbackReason(result) {
+  if (!result || result.previewFailed || result.code === 0) return null;
+
+  const output = `${result.stderr || ""}\n${result.stdout || ""}`;
+  // CLIProxy and the upstream Gemini API use underscore-delimited error
+  // codes such as RESOURCE_EXHAUSTED and QUOTA_EXHAUSTED. Normalize those
+  // separators before matching so a quota response without an explicit 429
+  // still reaches the next configured model.
+  const normalizedOutput = output.replace(/[_-]+/g, " ");
+  if (/\b(?:quota|resource exhausted|insufficient quota|daily limit|usage limit|out of extra usage|model cooldown|cooling down|capacity on this model)\b/i.test(normalizedOutput)) return "quota";
+  if (/\b(?:rate\s*limit|too many requests|429)\b/i.test(normalizedOutput)) return "rate_limit";
+  if (FALLBACK_ERROR_PATTERNS.some((pattern) => pattern.test(normalizedOutput))) return "model_unavailable";
+  return null;
+}
+
+export function shouldFallback(result, currentModel, fallbackModel) {
+  return Boolean(fallbackModel && fallbackModel !== currentModel && fallbackReason(result));
+}
+
+export function failureCategory(result) {
+  if (!result || result.code === 0) return null;
+  if (result?.previewFailed) return "preview_failed";
+  return fallbackReason(result) || "review_failed";
+}
+
+export function reviewOutcome(findings) {
+  const count = Array.isArray(findings) ? findings.length : 0;
+  return {
+    count,
+    hasFindings: count > 0,
+    exitCode: count > 0 ? 1 : 0,
+  };
+}
+
+export function formatProgressSummary({ stage, model, fallbackModel, reason, mode, findings, headSha }) {
+  const modelText = model ? ` with \`${model}\`` : "";
+  const modeText = mode ? ` (${mode} mode)` : "";
+  const shaText = typeof headSha === "string" && headSha ? `\`${headSha.slice(0, 7)}\`` : "the current commit";
+
+  switch (stage) {
+    case "preparing":
+      return `👀 Preparing Verenu AI review${modeText}...`;
+    case "reviewing":
+      return `🔍 Reviewing ${shaText}${modelText}...`;
+    case "switching":
+      return `🔁 ${model ? `\`${model}\`` : "Primary model"} ${reason === "model_unavailable" ? "unavailable" : reason === "rate_limit" ? "rate-limited" : "quota unavailable"}, switching to ${fallbackModel ? `\`${fallbackModel}\`` : "the fallback model"}...`;
+    case "complete":
+      {
+        const findingCount = Number.isFinite(Number(findings)) ? Number(findings) : 0;
+        return `✅ Verenu AI review complete${modelText}. Reviewed ${shaText} (${findingCount} finding${findingCount === 1 ? "" : "s"}).`;
+      }
+    case "findings":
+      {
+        const findingCount = Number.isFinite(Number(findings)) ? Number(findings) : 0;
+        return `❌ Verenu AI review found ${findingCount} finding${findingCount === 1 ? "" : "s"}. Reviewed ${shaText}${modelText}.`;
+      }
+    case "failed":
+      return `❌ Verenu AI review failed (${SAFE_FAILURE_REASONS.has(reason) ? reason : "review_failed"}).`;
+    default:
+      return `👀 Verenu AI review in progress${modelText}...`;
+  }
+}
