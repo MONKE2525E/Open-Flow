@@ -90,8 +90,8 @@
   --pill-stage-size: 10.5px;
   --pill-stage-weight: 600;
   --pill-context-bg: var(--pill-bg);
-  --pill-context-fg: rgba(17, 17, 16, 0.72);
-  --pill-context-line: rgba(17, 17, 16, 0.13);
+  --pill-context-fg: var(--pill-fg);
+  --pill-context-line: var(--pill-line);
 
   /* Error pill is always dark red-tinted, regardless of theme — matches the
      dark-theme --danger/--danger-bg/--danger-line so the pill and in-app
@@ -216,6 +216,6 @@
   --pill-stage-size: 11px;
   --pill-stage-weight: 600;
   --pill-context-bg: var(--pill-bg);
-  --pill-context-fg: rgba(255, 255, 255, 0.72);
-  --pill-context-line: rgba(255, 255, 255, 0.08);
+  --pill-context-fg: var(--pill-fg);
+  --pill-context-line: var(--pill-line);
 }
