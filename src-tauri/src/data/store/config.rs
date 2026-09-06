@@ -40,6 +40,7 @@ pub const ASSEMBLYAI: &str = "assemblyai";
 pub(crate) const LOCAL: &str = "local";
 pub const GROQ_GPT_OSS_20B_MODEL: &str = "openai/gpt-oss-20b";
 pub const GROQ_QWEN_3_6_27B_MODEL: &str = "qwen/qwen3.6-27b";
+pub const GROQ_QWEN_3_8_27B_MODEL: &str = "qwen/qwen3.8-27b";
 pub const DEPRECATED_GROQ_LLAMA_8B_MODEL: &str = "llama-3.1-8b-instant";
 pub const DEPRECATED_GROQ_LLAMA_70B_MODEL: &str = "llama-3.3-70b-versatile";
 pub const PROVIDERS: [&str; 5] = [GROQ, OPENAI, GOOGLE, ASSEMBLYAI, LOCAL];
@@ -59,7 +60,7 @@ pub fn default_cleanup_model_for(provider: &str) -> &'static str {
         LOCAL => "gemma-4-e2b",
         OPENAI => "gpt-4o-mini",
         GOOGLE => "gemini-3.5-flash-lite",
-        _ => GROQ_QWEN_3_6_27B_MODEL,
+        _ => GROQ_QWEN_3_8_27B_MODEL,
     }
 }
 
@@ -70,13 +71,14 @@ pub fn migrate_deprecated_model_id(id: &str) -> String {
     if provider == GROQ
         && matches!(
             model.as_str(),
-            DEPRECATED_GROQ_LLAMA_8B_MODEL
+                DEPRECATED_GROQ_LLAMA_8B_MODEL
                 | DEPRECATED_GROQ_LLAMA_70B_MODEL
                 | GROQ_GPT_OSS_20B_MODEL
                 | "openai/gpt-oss-120b"
+                | GROQ_QWEN_3_6_27B_MODEL
         )
     {
-        format!("{GROQ}/{GROQ_QWEN_3_6_27B_MODEL}")
+        format!("{GROQ}/{GROQ_QWEN_3_8_27B_MODEL}")
     } else if provider == GOOGLE && matches!(model.as_str(), "gemini-3.7-flash" | "gemini-2.5-pro")
     {
         format!("{GOOGLE}/gemini-3.5-flash-lite")
