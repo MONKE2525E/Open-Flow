@@ -66,7 +66,7 @@ pub async fn fetch_model_pricing() -> Result<Vec<ModelPricing>> {
 /// paid/free/batch variants with the same base id; the plain model wins, and
 /// a lexical tie-breaker keeps the result deterministic.
 fn parse_model_pricing(records: Vec<ModelRecord>) -> Vec<ModelPricing> {
-    let mut by_base_id = BTreeMap::<String, ModelPricing>::new();
+    let mut by_base_id = BTreeMap::<String, (String, ModelPricing)>::new();
     for record in records {
         let Some(pricing) = record.pricing else {
             continue;
@@ -86,7 +86,10 @@ fn parse_model_pricing(records: Vec<ModelRecord>) -> Vec<ModelPricing> {
         }
 
         let candidate = ModelPricing {
-            model_id: model_id.clone(),
+            // Store the canonical base id even when the catalog only exposes
+            // a variant, so client lookups do not depend on `:free`, `:nitro`,
+            // or another provider-specific suffix.
+            model_id: base_id.to_string(),
             prompt_usd_per_token: prompt,
             completion_usd_per_token: completion,
         };
@@ -94,17 +97,20 @@ fn parse_model_pricing(records: Vec<ModelRecord>) -> Vec<ModelPricing> {
             // Prefer the unsuffixed paid model over a variant. If both are
             // variants, use the lexical order so API ordering cannot change
             // which duplicate survives.
-            let existing_plain = existing.model_id.eq_ignore_ascii_case(base_id);
+            let existing_plain = existing.0.eq_ignore_ascii_case(base_id);
             let candidate_plain = model_id.eq_ignore_ascii_case(base_id);
             (candidate_plain && !existing_plain)
                 || (candidate_plain == existing_plain
-                    && model_id.as_str() < existing.model_id.as_str())
+                    && model_id.as_str() < existing.0.as_str())
         });
         if replace {
-            by_base_id.insert(base_id.to_string(), candidate);
+            by_base_id.insert(base_id.to_string(), (model_id, candidate));
         }
     }
-    by_base_id.into_values().collect()
+    by_base_id
+        .into_values()
+        .map(|(_, pricing)| pricing)
+        .collect()
 }
 
 #[cfg(test)]
@@ -144,5 +150,16 @@ mod tests {
 
         assert_eq!(rates.len(), 1);
         assert_eq!(rates[0].model_id, "good/model");
+    }
+
+    #[test]
+    fn canonicalizes_variant_only_models() {
+        let rates = parse_model_pricing(vec![record(
+            "google/gemini-3.7-flash:nitro",
+            "0.00000075",
+            "0.00000375",
+        )]);
+
+        assert_eq!(rates[0].model_id, "google/gemini-3.7-flash");
     }
 }
