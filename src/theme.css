@@ -82,7 +82,7 @@
   --pill-shine-strong: #111110;
   --pill-stage-size: 10.5px;
   --pill-stage-weight: 600;
-  --pill-context-bg: #f1f1ef;
+  --pill-context-bg: var(--pill-bg);
   --pill-context-fg: rgba(17, 17, 16, 0.72);
   --pill-context-line: rgba(17, 17, 16, 0.13);
 
