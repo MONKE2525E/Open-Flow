@@ -7,7 +7,7 @@
 - **Pure black-and-white icons** - Removed orange from native and packaged icons so they follow light and dark appearance modes
 - **Reliable hands-free conversion** - Keeps a converted hold-to-talk session alive when stale Windows modifier-release events arrive
 - **Insights pace scale** - Replaced the speaking-pace dial with a readable tick scale that marks the personal best
-- **Smoother Windows windows** - Coalesced drag and resize refreshes, reduced CPU spikes, and reused themed icon artwork
+- **Smoother Windows performance** - Coalesced drag and resize refreshes, reduced CPU spikes, and reused themed icon artwork
 - **Context-aware app matching** - Keeps context app targets working across versioned and nightly app updates when publisher evidence matches
 - **Shared cleanup prompt** - Uses one editable cleanup template for every model, including fallback models, with clearer rules for multilingual text, numbers, symbols, and technical terms
 - **Broader model selection** - Lists provider-reported text models behind an opt-in expansion while filtering out non-text models
