@@ -16,7 +16,7 @@ The current palette avoids the older cream light theme and orange-brown dark the
 
 Accent color controls actions, selection indicators, focus rings, and status details. Choose a preset or enter a six-digit hex color in the accent picker. Verenu derives the related soft background, readable text, and foreground colors for both light and dark themes.
 
-Reset the picker to remove the custom value and restore Verenu's default terracotta accent. Changing the accent does not tint the neutral page backgrounds.
+Reset the picker to remove the custom value and restore Verenu's neutral default accent: black in light mode and white in dark mode. Changing the accent does not tint the neutral page backgrounds.
 
 ## Finding a setting
 

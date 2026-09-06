@@ -14,6 +14,7 @@ const ACCENT_PROPERTIES = [
   '--accent-ink',
   '--accent-soft',
   '--on-accent',
+  '--hero-accent',
 ] as const;
 
 export function normalizeAccentColor(value: unknown): string | null {
@@ -21,6 +22,12 @@ export function normalizeAccentColor(value: unknown): string | null {
   const trimmed = value.trim();
   if (!HEX_COLOR.test(trimmed)) return null;
   return trimmed.toUpperCase();
+}
+
+/** Exact black and white mean "follow the theme default," not a fixed custom accent. */
+export function isAdaptiveDefaultAccent(value: unknown): boolean {
+  const normalized = normalizeAccentColor(value);
+  return normalized === '#000000' || normalized === '#FFFFFF';
 }
 
 function relativeLuminance(hex: string): number {
@@ -39,6 +46,22 @@ export function foregroundForAccent(hex: string): '#17100C' | '#FFFFFF' {
   const darkLuminance = relativeLuminance('#17100C');
   const darkContrast = (luminance + 0.05) / (darkLuminance + 0.05);
   return darkContrast >= whiteContrast ? '#17100C' : '#FFFFFF';
+}
+
+/**
+ * The home-page hotkey tile is always dark. Only neutral black-adjacent
+ * accents are replaced with white there. Colored accents stay exact, even if
+ * they are dark, so a chosen purple or blue remains consistent across the UI.
+ */
+export function foregroundForDarkSurface(hex: string): string {
+  const normalized = normalizeAccentColor(hex);
+  if (!normalized) return '#FFFFFF';
+
+  const channels = [1, 3, 5].map((offset) => Number.parseInt(normalized.slice(offset, offset + 2), 16));
+  const darkest = Math.min(...channels);
+  const lightest = Math.max(...channels);
+  const isNearBlackNeutral = lightest <= 0x4d && lightest - darkest <= 0x18;
+  return isNearBlackNeutral ? '#FFFFFF' : normalized;
 }
 
 export function applyAccentTheme(
@@ -71,6 +94,7 @@ export function applyAccentTheme(
     '--accent-ink': ink(68),
     '--accent-soft': soft(14),
     '--on-accent': foregroundForAccent(accent),
+    '--hero-accent': foregroundForDarkSurface(accent),
   };
 
   for (const property of ACCENT_PROPERTIES) root.style.setProperty(property, palette[property]);

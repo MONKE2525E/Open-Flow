@@ -14,7 +14,9 @@
   } = $props();
 
   const presets = [
-    { label: 'Terracotta', value: null, color: '#D97757' },
+    // Keep Default on a theme token that applyAccentTheme never overrides, so
+    // the swatch still shows black/white while a custom accent is active.
+    { label: 'Default', value: null, color: 'var(--accent-theme-default)' },
     { label: 'Blue', value: '#4F7FD8', color: '#4F7FD8' },
     { label: 'Teal', value: '#398E94', color: '#398E94' },
     { label: 'Green', value: '#4F9C78', color: '#4F9C78' },
@@ -23,17 +25,32 @@
   ] as const;
 
   let open = $state(false);
-  let draft = $state('#D97757');
+  let draft = $state('#000000');
   let invalid = $state(false);
   let colorInput: HTMLInputElement | null = $state(null);
 
+  function defaultAccentColor(): string {
+    if (typeof document === 'undefined') return '#000000';
+    const styles = getComputedStyle(document.documentElement);
+    return (
+      normalizeAccentColor(styles.getPropertyValue('--accent-theme-default'))
+      ?? normalizeAccentColor(styles.getPropertyValue('--accent'))
+      ?? '#000000'
+    );
+  }
+
   $effect(() => {
-    draft = value ?? '#D97757';
+    draft = value ?? defaultAccentColor();
     invalid = false;
   });
 
-  const displayColor = $derived(value ?? '#D97757');
+  const displayColor = $derived(value ?? draft);
   const displayLabel = $derived(value ? value : 'Default');
+
+  function togglePicker() {
+    if (!open && !value) draft = defaultAccentColor();
+    open = !open;
+  }
 
   async function choose(next: string | null) {
     invalid = false;
@@ -64,9 +81,9 @@
       class="btn-ghost ui-dropdown-trigger ui-dropdown-trigger--compact accent-trigger"
       aria-haspopup="dialog"
       aria-expanded={open}
-      onclick={() => (open = !open)}
+      onclick={togglePicker}
     >
-      <span class="trigger-swatch" style:background={displayColor} aria-hidden="true"></span>
+      <span class="trigger-swatch" style:background={value ?? undefined} aria-hidden="true"></span>
       <span>{displayLabel}</span>
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
         <path d="m3.25 4.75 2.75 2.5 2.75-2.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
@@ -104,7 +121,7 @@
         <div class="custom-heading">Custom color</div>
         <div class="custom-row">
           <button class="color-well" aria-label="Open color picker" onclick={() => colorInput?.click()}>
-            <span style:background={displayColor}></span>
+            <span style:background={value ?? undefined}></span>
           </button>
           <input
             bind:this={colorInput}
@@ -144,6 +161,7 @@
   .accent-picker { position: relative; }
   .accent-trigger { min-width: 112px; }
   .trigger-swatch {
+    background: var(--accent);
     border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent);
     border-radius: 50%;
     height: 13px;
@@ -214,7 +232,7 @@
     padding: 3px;
     width: 28px;
   }
-  .color-well span { border-radius: 3px; display: block; height: 100%; width: 100%; }
+  .color-well span { background: var(--accent); border-radius: 3px; display: block; height: 100%; width: 100%; }
   .color-well:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .native-color-input { height: 0; opacity: 0; pointer-events: none; position: absolute; width: 0; }
   .hex-field {

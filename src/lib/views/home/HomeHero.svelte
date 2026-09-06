@@ -30,7 +30,7 @@
     position: absolute;
     right: -80px; top: -80px;
     width: 360px; height: 360px;
-    background: radial-gradient(circle, color-mix(in srgb, var(--accent) 22%, transparent) 0%, transparent 60%);
+    background: radial-gradient(circle, color-mix(in srgb, var(--hero-accent) 22%, transparent) 0%, transparent 60%);
     pointer-events: none;
   }
 
@@ -43,23 +43,23 @@
     letter-spacing: -0.02em;
     margin: 0 0 8px;
     line-height: 1.15;
-    color: var(--pill-fg);
+    color: #ffffff;
   }
 
   .hero-photo-title :global(kbd) {
-    background: color-mix(in srgb, var(--pill-fg) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--pill-fg) 18%, transparent);
+    background: rgb(255 255 255 / 10%);
+    border: 1px solid rgb(255 255 255 / 18%);
     border-radius: 5px;
     font-family: var(--mono);
     font-size: 13px;
     padding: 1px 6px;
-    color: var(--jap-300);
+    color: var(--hero-accent);
     font-weight: 500;
   }
 
   .hero-photo-sub {
     font-size: 12.5px;
-    color: color-mix(in srgb, var(--pill-fg) 58%, transparent);
+    color: rgb(255 255 255 / 70%);
     margin: 0;
     line-height: 1.5;
   }
@@ -67,7 +67,7 @@
   .hero-em {
     font-family: var(--sans);
     font-style: italic;
-    color: color-mix(in srgb, var(--pill-fg) 82%, transparent);
+    color: rgb(255 255 255 / 90%);
   }
 
   @media (max-width: 720px) {

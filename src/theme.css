@@ -10,15 +10,15 @@
   --amber-100: #f5f4f2;
   --amber-200: #e6e4e0;
 
-  /* Japonica, default accent */
-  --jap-50: #fcf4f0;
-  --jap-100: #f8e6dc;
-  --jap-200: #f0cbb8;
-  --jap-300: #e6a78b;
-  --jap-400: #d97757;
-  --jap-500: #cc5e3e;
-  --jap-600: #c44632;
-  --jap-700: #a3352b;
+  /* Neutral default accent scale. A custom color replaces this at runtime. */
+  --jap-50: #f8f8f7;
+  --jap-100: #ededeb;
+  --jap-200: #d9d9d6;
+  --jap-300: #a3a3a0;
+  --jap-400: #000000;
+  --jap-500: #000000;
+  --jap-600: #000000;
+  --jap-700: #000000;
 
   /* Neutral text and lines */
   --arm-200: #e3e2e0;
@@ -52,6 +52,13 @@
   --accent-ink: var(--jap-700);
   --accent-soft: var(--jap-100);
   --on-accent: #ffffff;
+  /* Stable default for the Accent picker Default swatch. applyAccentTheme
+     overrides --accent for custom colors, but never this token. */
+  --accent-theme-default: #000000;
+
+  /* The Home instruction tile always has a dark surface. Its copy must not
+     inherit the page theme's foreground or a low-contrast custom accent. */
+  --hero-accent: #ffffff;
 
   --danger: #dc2626;
   --danger-bg: #fef2f2;
@@ -137,14 +144,14 @@
   --amber-100: #1d1b1a;
   --amber-200: #292726;
 
-  --jap-50: #2b1712;
-  --jap-100: #3a241d;
-  --jap-200: #623527;
-  --jap-300: #f0a987;
-  --jap-400: oklch(0.70 0.13 42);
-  --jap-500: #e58b68;
-  --jap-600: #c8654a;
-  --jap-700: #f0a987;
+  --jap-50: #20201f;
+  --jap-100: #2b2b29;
+  --jap-200: #474744;
+  --jap-300: #b8b8b4;
+  --jap-400: #ffffff;
+  --jap-500: #f5f4f0;
+  --jap-600: #fbfaf6;
+  --jap-700: #ffffff;
 
   --arm-200: #2b2928;
   --arm-300: #3d3a38;
@@ -172,10 +179,12 @@
   --line-soft: #242321;
   --line-strong: #3d3a38;
 
-  --accent: oklch(0.70 0.13 42);
-  --accent-soft: #3a241d;
-  --accent-ink: #f0a987;
-  --on-accent: #17100c;
+  --accent: #ffffff;
+  --accent-soft: #2b2b29;
+  --accent-ink: #ffffff;
+  --on-accent: #111110;
+  --accent-theme-default: #ffffff;
+  --hero-accent: #ffffff;
 
   --danger: #ff8f80;
   --danger-bg: #351613;
