@@ -158,7 +158,7 @@ export const PACE_TICKS = 44;
  * the end.
  */
 export function paceScale(bestWpm: number, ticks = PACE_TICKS): { max: number; bestTick: number } {
-  const max = Math.max(200, Math.ceil(bestWpm / 50) * 50);
+  const max = Math.min(250, Math.max(200, Math.ceil(bestWpm / 50) * 50));
   if (bestWpm <= 0) return { max, bestTick: -1 };
   // Lower clamp: a best under half a tick still deserves a marker on tick 0
   // rather than rounding away to "no best".
