@@ -666,8 +666,8 @@
     cursor: default;
   }
   .copy-logs-btn.copied {
-    color: var(--jap-500, #d97757);
-    border-color: var(--jap-500, #d97757);
+    color: var(--jap-500);
+    border-color: var(--jap-500);
   }
   .copy-logs-btn svg {
     width: 12px;

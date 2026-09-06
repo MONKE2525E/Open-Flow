@@ -18,7 +18,7 @@
   import { transcriptionModelStore } from '../../transcriptionModelStore.svelte';
   import { modelDisplayLabel, splitModelId } from './models';
   import AccentColorPicker from './AccentColorPicker.svelte';
-  import { ACCENT_CHANGE_EVENT, animateAccentChange } from '../../accentTheme';
+  import { ACCENT_CHANGE_EVENT, animateAccentChange, isAdaptiveDefaultAccent } from '../../accentTheme';
 
   let selectedLanguage = $state<TranscriptionLanguageCode>('en');
   let languageDropdownOpen = $state(false);
@@ -357,27 +357,57 @@
   }
 
   async function handleAppearance(mode: AppearanceMode) {
-    const previous = appStore.appearanceMode;
-    appStore.appearanceMode = mode;
+    const previousAppearance = appStore.appearanceMode;
+    const previousAccent = appStore.accentColor;
+    const resetAccentToThemeDefault = isAdaptiveDefaultAccent(previousAccent);
+    let accentResetSaved = false;
+
     try {
+      // Exact black and white represent the default accent in their respective
+      // themes. Save null so the CSS default adapts when Appearance changes.
+      if (resetAccentToThemeDefault) {
+        await saveSetting('accent_color', null);
+        accentResetSaved = true;
+      }
       await saveSetting('appearance_mode', mode);
+
+      await animateAccentChange(async () => {
+        appStore.appearanceMode = mode;
+        if (resetAccentToThemeDefault) appStore.accentColor = null;
+        await tick();
+      });
+      if (resetAccentToThemeDefault) {
+        void emit(ACCENT_CHANGE_EVENT, null).catch((err) => {
+          console.warn('broadcast adaptive accent reset failed:', err);
+        });
+      }
     } catch (err) {
-      appStore.appearanceMode = previous;
+      if (accentResetSaved) {
+        try {
+          await saveSetting('accent_color', previousAccent);
+        } catch (rollbackErr) {
+          console.error('restore accent_color after appearance save failed:', rollbackErr);
+        }
+      }
+      appStore.appearanceMode = previousAppearance;
+      appStore.accentColor = previousAccent;
       console.error('save appearance_mode failed:', err);
     }
   }
 
   async function handleAccentColor(color: string | null) {
+    // Exact black/white are the theme defaults, not fixed custom accents.
+    const next = isAdaptiveDefaultAccent(color) ? null : color;
     const previous = appStore.accentColor;
     await animateAccentChange(async () => {
-      appStore.accentColor = color;
+      appStore.accentColor = next;
       await tick();
     });
-    void emit(ACCENT_CHANGE_EVENT, color).catch((err) => {
+    void emit(ACCENT_CHANGE_EVENT, next).catch((err) => {
       console.warn('broadcast accent color failed:', err);
     });
     try {
-      await saveSetting('accent_color', color);
+      await saveSetting('accent_color', next);
     } catch (err) {
       await animateAccentChange(async () => {
         appStore.accentColor = previous;

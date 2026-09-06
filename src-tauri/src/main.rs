@@ -580,7 +580,6 @@ fn main() {
             }
         });
 }
-
 #[cfg(target_os = "windows")]
 static TITLEBAR_REFRESH_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -604,4 +603,3 @@ fn schedule_settled_titlebar_refresh(app: &tauri::AppHandle) {
         }
     });
 }
-

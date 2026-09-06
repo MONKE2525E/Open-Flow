@@ -3,9 +3,9 @@
 </div>
 
 <p align="center">
-  Hold the hotkey, talk, release, and Verenu drops cleaned-up text into the app you were already using.
+  Free, open-source AI dictation for Windows and macOS. Hold a hotkey, talk, release, and cleaned-up text is typed into any app.
   <br/>
-  <em>Local-first AI dictation for Windows and macOS. Bring your own cloud API keys when needed. No subscriptions. No telemetry.</em>
+  <em>Local-first. BYOK or local models. No subscriptions. No telemetry. A free, open-source alternative to closed-source dictation apps like Wispr Flow and Superwhisper.</em>
 </p>
 
 <p align="center">
@@ -16,7 +16,7 @@
 
 ## What Verenu Is
 
-Verenu is an open source desktop dictation app built with Tauri, Svelte, Rust, and SQLite.
+Verenu is a free, open source desktop AI dictation app for Windows and macOS, built with Tauri, Svelte, Rust, and SQLite.
 
 It records locally, sends audio and text only to the AI providers you choose, keeps your app data on your machine, and avoids the usual Electron bloat. The goal is simple: fast dictation, predictable formatting, and privacy that is easy to understand.
 

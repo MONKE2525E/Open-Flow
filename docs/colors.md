@@ -29,15 +29,17 @@ The sidebar and page colors intentionally differ by only a few RGB points. The d
 
 ## Accent
 
-Terracotta is the default accent and is used sparingly for primary actions, selection indicators, focus rings, and status details. Users can replace it in **Settings -> General -> Accent color**. A custom color updates the semantic accent tokens and the full Japonica scale in both themes, while the neutral surfaces stay unchanged.
+Black in light mode and white in dark mode are the default accents, used sparingly for primary actions, selection indicators, focus rings, and status details. Users can replace them in **Settings -> General -> Accent color**. A custom color updates the semantic accent tokens and the full accent scale in both themes, while the neutral surfaces stay unchanged.
 
 | Token | Light default | Usage |
 |---|---:|---|
-| `--accent` | `#d97757` | Primary accent |
-| `--accent-ink` | `#a3352b` | Accent text |
-| `--accent-soft` | `#f8e6dc` | Soft accent background |
+| `--accent` | `#000000` | Primary accent |
+| `--accent-ink` | `#000000` | Accent text |
+| `--accent-soft` | `#ededeb` | Soft accent background |
+| `--accent-theme-default` | `#000000` | Stable Default swatch (not overridden by custom accents) |
+| `--hero-accent` | `#ffffff` | Home hotkey tile accent on its always-dark surface |
 
-Custom accents are stored as a six-digit hex color. The app derives readable soft, ink, and foreground variants against the active light or dark theme. Resetting the picker removes the override and restores the theme-specific Terracotta defaults.
+Custom accents are stored as a six-digit hex color. The app derives readable soft, ink, and foreground variants against the active light or dark theme. Resetting the picker removes the override and restores the neutral theme-specific defaults. Exact `#000000` / `#FFFFFF` picks are treated as adaptive defaults and stored as unset.
 
 ## Typography
 
