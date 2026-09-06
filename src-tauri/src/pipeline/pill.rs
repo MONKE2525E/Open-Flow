@@ -355,6 +355,7 @@ fn pill_state_has_clickable_buttons(state: &str) -> bool {
         "handsfree"
             | "error"
             | "cancelled"
+            | "interrupted"
             | "paste_failed"
             | "copied"
     )

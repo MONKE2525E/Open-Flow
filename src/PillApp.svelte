@@ -1715,9 +1715,9 @@
     transition: opacity 0.15s;
   }
   .hf-btn.cancel  { color: var(--pill-muted); }
-  .hf-btn.confirm { color: var(--pill-confirm); }
+  .hf-btn.confirm { color: var(--accent); }
   .hf-btn.cancel:hover  { color: var(--pill-muted-strong); }
-  .hf-btn.confirm:hover { color: var(--pill-confirm); }
+  .hf-btn.confirm:hover { color: var(--accent-ink); }
 
   @keyframes hfBtnIn {
     /* Gentle fade + tiny rise, deliberately no scale — a pop reads as the UI
