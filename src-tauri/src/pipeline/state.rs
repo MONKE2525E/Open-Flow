@@ -181,6 +181,15 @@ pub struct CancelledCapture {
     pub origin: CaptureOrigin,
     pub created_at_rfc3339: String,
     pub started_at_unix: i64,
+    // The dictation's original focus target, captured when that recording
+    // started. Resuming must reuse this rather than re-capturing the
+    // foreground window: by the time the user clicks Undo, the foreground
+    // window is Verenu's own pill (it just received a real click), not the
+    // app the user was dictating into — see resume_cancelled_capture, which
+    // used to call WindowTarget::capture_foreground() itself and always hit
+    // that self-target, tripping finalize.rs's self-inject guard and
+    // clipboard-only fallback on every resume.
+    pub target: WindowTarget,
 }
 
 /// Final injected text from a dictation whose paste couldn't be confirmed
@@ -783,6 +792,7 @@ mod tests {
                 origin: CaptureOrigin::UserCancelled,
                 created_at_rfc3339: "2026-01-01T00:00:00Z".into(),
                 started_at_unix: 0,
+                target: WindowTarget::default(),
             });
         }
         // Peeking clones — the slot must survive for the later clear.
@@ -808,6 +818,7 @@ mod tests {
                 origin: CaptureOrigin::UserCancelled,
                 created_at_rfc3339: "2026-01-01T00:00:00Z".into(),
                 started_at_unix: 0,
+                target: WindowTarget::default(),
             });
         }
         clear_cancelled_capture(&state);
@@ -828,6 +839,7 @@ mod tests {
                 origin: CaptureOrigin::UserCancelled,
                 created_at_rfc3339: "2026-01-01T00:00:00Z".into(),
                 started_at_unix: 0,
+                target: WindowTarget::default(),
             });
             st.retry_capture = Some(RetryCapture {
                 audio,

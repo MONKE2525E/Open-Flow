@@ -1005,8 +1005,11 @@
            mid-flight, which instantly stole space from the already-fading-in
            text and read as it "shifting around before settling". Fading
            opacity in-place keeps the staggered-arrival feel without the
-           layout shift. -->
-      <button class="hf-btn confirm" class:btn-visible={showCancelBtn} onclick={continueCancelled} aria-label="Undo — keep recording">
+           layout shift. `disabled`/`tabindex`/`aria-hidden` keep it out of
+           the tab order and the a11y tree while invisible — opacity+
+           pointer-events alone hide it visually but a keyboard user could
+           still Tab to and activate it before the reveal. -->
+      <button class="hf-btn confirm" class:btn-visible={showCancelBtn} disabled={!showCancelBtn} tabindex={showCancelBtn ? 0 : -1} aria-hidden={!showCancelBtn} onclick={continueCancelled} aria-label="Undo — keep recording">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/>
         </svg>

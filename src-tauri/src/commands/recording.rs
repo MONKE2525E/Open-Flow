@@ -405,7 +405,24 @@ pub async fn resume_cancelled_capture(
         return Err("Nothing to resume".to_string());
     };
     pipeline::set_starting_prepend_audio(state.inner(), capture.audio.clone());
-    let target = WindowTarget::capture_foreground();
+    // Reuse the target captured when the original recording started, not the
+    // foreground window right now — by the time Undo is clicked, the
+    // foreground window is Verenu's own pill (it just took a real click),
+    // and injecting into that tripped finalize.rs's self-inject guard on
+    // every resume, silently downgrading to a clipboard-only "Ctrl+V to
+    // paste" pill no matter what app the user was actually dictating into.
+    // `.refreshed()` mirrors retry_transcription_impl's handling of a stale
+    // target — the window may have moved (or since closed) in the meantime.
+    //
+    // A zero `id` means this capture was recovered from disk after a crash/
+    // restart (see failover::loaded_to_capture), so there is no original
+    // target to restore — fall back to the current foreground window, same
+    // as before this fix, since that's the best guess available.
+    let target = if capture.target.id == 0 {
+        WindowTarget::capture_foreground()
+    } else {
+        capture.target.refreshed()
+    };
     {
         let mut st = match lock_state(&state) {
             Ok(st) => st,
