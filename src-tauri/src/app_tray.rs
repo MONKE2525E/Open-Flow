@@ -29,6 +29,10 @@ struct IconRect {
     radius: u32,
 }
 
+mod canonical_mark {
+    include!("generated_icon_geometry.rs");
+}
+
 pub(crate) fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let open_i = MenuItem::with_id(app, "open", "Open Verenu", true, None::<&str>)?;
     #[cfg(target_os = "macos")]
@@ -684,14 +688,8 @@ fn runtime_ico_bytes(theme: IconTheme, accent: [u8; 4], sizes: &[u32]) -> Result
 /// The window/Alt+Tab logo, drawn separately from [`runtime_icon_image`] so native
 /// Windows roles can be rendered directly at their requested size.
 ///
-/// Geometry is kept in step with `icons/icon-source-windows.svg`, which generates that
-/// `icon.ico`, so Explorer and the taskbar show the same logo. What is locked to the tray
-/// is the bar *height ratios*, not the silhouette: the tray's glyph is 1.31:1, so merely
-/// scaling it up runs the short outer bars into the tile's side margins before the tall
-/// middle bar fills the height, and it still reads as a small mark on a white card. The
-/// gaps are tightened and the glyph grown vertically instead, yielding a near-square
-/// 71.9% x 69.7% glyph with centre-y at 47.3% (the bars share a baseline, so true
-/// bounding-box centring reads as low).
+/// The packaged `icon.ico`, Explorer, the taskbar, and the tray all use uniform
+/// presentations of the canonical mark. Only their tile and overall scale vary.
 #[cfg(target_os = "windows")]
 fn windows_taskbar_icon_image(
     theme: IconTheme,
@@ -717,28 +715,7 @@ fn windows_taskbar_icon_image(
         background,
     );
 
-    // Mirrors the five <rect> bars in icons/icon-source-windows.svg on this 512 grid:
-    // bar 56, gap 22, tallest 357, shared baseline y = 421, glyph spans x 72..440, y 64..421.
-    for (x, y, width, height, radius) in [
-        (72, 301, 56, 120, 28),
-        (150, 181, 56, 240, 28),
-        (228, 64, 56, 357, 28),
-        (306, 215, 56, 206, 28),
-        (384, 315, 56, 106, 28),
-    ] {
-        draw_rounded_rect(
-            &mut rgba,
-            size,
-            IconRect {
-                x: scale(size, x),
-                y: scale(size, y),
-                width: scale(size, width),
-                height: scale(size, height),
-                radius: scale(size, radius),
-            },
-            accent,
-        );
-    }
+    draw_canonical_mark(&mut rgba, size, accent, scale(size, 368));
 
     tauri::image::Image::new_owned(rgba, size, size)
 }
@@ -787,26 +764,7 @@ fn runtime_tray_icon_image(
     let mut rgba = vec![0_u8; (size * size * 4) as usize];
     let color = runtime_tray_icon_color(theme);
 
-    for (x, y, width, height, radius) in [
-        (64, 304, 64, 96, 30),
-        (144, 208, 64, 192, 30),
-        (224, 112, 64, 288, 30),
-        (304, 240, 64, 160, 30),
-        (384, 320, 64, 80, 30),
-    ] {
-        draw_rounded_rect(
-            &mut rgba,
-            size,
-            IconRect {
-                x: scale(size, x),
-                y: scale(size, y),
-                width: scale(size, width),
-                height: scale(size, height),
-                radius: scale(size, radius),
-            },
-            color,
-        );
-    }
+    draw_canonical_mark(&mut rgba, size, color, scale(size, 336));
 
     tauri::image::Image::new_owned(rgba, size, size)
 }
@@ -877,53 +835,10 @@ fn windows_micro_icon_image(
         background,
     );
 
-    // Classic tray proportions (bar 48, gap 24, heights 88/177/263/152/78 on a
-    // shared baseline at 416 of the 512 grid) — the same silhouette the tray
-    // used before supersampling, so the glyph sits in the tile with real
-    // margins instead of filling ~70% of it edge to edge. Bar height *ratios*
-    // match the taskbar artwork either way, so the two still read as one logo.
-    //
-    // The horizontal metrics and the baseline are rounded to WHOLE NATIVE PIXELS first and
-    // only then scaled into the supersampled grid. Deriving them as raw fractions instead
-    // gives a bar 3.28px wide on a 4.91px pitch at 30px, so every bar sits on a different
-    // sub-pixel phase and the box filter smears each one by a different amount — measured on
-    // the real taskbar that came out as bar pitch 5,4,4,5 and gaps 2,1,1,2, i.e. the
-    // "uneven bars". Snapping to integers makes every bar the same width, every gap the same
-    // width, and the shared baseline land on one exact row; only the rounded caps get
-    // anti-aliased, which is the part that should be smooth.
-    const SOURCE_GRID: u32 = 512;
-    let round_div = |value: u32, div: u32| (value + div / 2) / div;
-    let bar_width = round_div(size * 48, SOURCE_GRID).max(2);
-    let gap = round_div(size * 24, SOURCE_GRID).max(1);
-    let glyph_width = bar_width * 5 + gap * 4;
-    let left = size.saturating_sub(glyph_width) / 2;
-    let max_height_px = round_div(size * 263, SOURCE_GRID).max(4);
-    // Center the glyph box in the tile: baseline-anchoring left a taller top
-    // margin than bottom one (6 vs 4 at 20px) and the mark read as sitting low.
-    let top_px = size.saturating_sub(max_height_px) / 2;
-    let baseline_px = top_px + max_height_px;
-    let heights =
-        [88_u32, 177, 263, 152, 78].map(|h| round_div(max_height_px * h, 263).max(1) * factor);
-
-    let bar_width_ss = bar_width * factor;
-    let gap_ss = gap * factor;
-    let left_ss = left * factor;
-    let baseline = baseline_px * factor;
-
-    for (index, height) in heights.into_iter().enumerate() {
-        draw_rounded_rect(
-            &mut rgba,
-            render_size,
-            IconRect {
-                x: left_ss + index as u32 * (bar_width_ss + gap_ss),
-                y: baseline - height,
-                width: bar_width_ss,
-                height,
-                radius: bar_width_ss.div_ceil(2),
-            },
-            accent,
-        );
-    }
+    // Snap the canonical mark's presentation width on the native grid before
+    // supersampling, keeping tiny icons on stable pixel pitches.
+    let glyph_width = ((size * 336) / 512).max(1) * factor;
+    draw_canonical_mark(&mut rgba, render_size, accent, glyph_width);
 
     // Box-average downsample (mean of each factor x factor block), not Lanczos: at a 32x
     // ratio Lanczos's negative lobes ring on the bars' sharp edges, most visibly on the
@@ -1108,20 +1023,14 @@ mod windows_icon_tests {
         panic!("icon.ico has no {want}x{want} frame");
     }
 
-    /// Windows draws two independently-produced logos for this app: the tray uses
-    /// [`runtime_tray_icon_image`], while Explorer and the pinned-but-not-running
-    /// taskbar button render the exe's embedded `icon.ico`. Nothing links them, and
-    /// they have drifted twice.
+    /// Windows Explorer and the taskbar use the generated `icon.ico`; the runtime
+    /// tray icon is rendered separately. Both derive from the canonical mark.
     ///
     /// This checks the FINAL raster, not source coordinates — so it also proves
     /// `scripts/generate-icons.ps1` was actually re-run after the SVG changed.
     ///
-    /// The taskbar glyph is deliberately NOT a scaled copy of the tray's. The tray sits
-    /// on a dark tile that blends into the shell; this cream tile reads as a hard edge,
-    /// and a tray-proportioned glyph looked stranded on a white card. Scaling the tray up
-    /// does not fix that either — its 1.31:1 silhouette runs the short outer bars into the
-    /// side margins before the tall middle bar fills the height. What must hold is that
-    /// the bar height RATIOS are unchanged and the glyph is optically centred.
+    /// The package changes the taskbar envelope for optical sizing while
+    /// preserving the canonical bar-height ratios.
     #[test]
     fn taskbar_ico_is_centered_and_keeps_tray_bar_ratios() {
         let ico = include_bytes!("../icons/icon.ico");
@@ -1148,18 +1057,17 @@ mod windows_icon_tests {
             "taskbar glyph width {w:.3} outside 0.69..0.76"
         );
         assert!(
-            (0.66..=0.73).contains(&h),
-            "taskbar glyph height {h:.3} outside 0.66..0.73"
+            (0.56..=0.62).contains(&h),
+            "taskbar glyph height {h:.3} outside 0.56..0.62"
         );
         assert!(
             (cx - 0.5).abs() <= 0.02,
             "taskbar glyph is not horizontally centred: cx {cx:.3}"
         );
-        // The bars share a baseline, so visual mass sits low; centre-or-slightly-high
-        // reads as balanced, centre-or-low does not.
+        // Uniform centring keeps all presentations aligned.
         assert!(
-            (0.44..=0.50).contains(&cy),
-            "taskbar glyph centre-y {cy:.3} should sit just above centre (0.44..0.50)"
+            (0.48..=0.52).contains(&cy),
+            "taskbar glyph centre-y {cy:.3} is not centred"
         );
     }
 
@@ -1174,22 +1082,22 @@ mod windows_icon_tests {
 
         assert_matches_tray_ratios("taskbar hicon", &bar_height_ratios(taskbar.rgba(), size));
 
-        // Deliberately taller and squarer than the tray, which is 65.6% x 50.0%.
+        // The taskbar glyph is a uniform presentation of the canonical mark.
         assert!(
             (0.70..=0.74).contains(&w),
             "taskbar hicon width {w:.3} outside 0.70..0.74"
         );
         assert!(
-            (0.68..=0.72).contains(&h),
-            "taskbar hicon height {h:.3} outside 0.68..0.72"
+            (0.56..=0.62).contains(&h),
+            "taskbar hicon height {h:.3} outside 0.56..0.62"
         );
         assert!(
             (cx - 0.5).abs() <= 0.02,
             "taskbar hicon not horizontally centred: cx {cx:.3}"
         );
         assert!(
-            (0.44..=0.50).contains(&cy),
-            "taskbar hicon centre-y {cy:.3} sits too low (was 0.555 when shared with the tray)"
+            (0.48..=0.52).contains(&cy),
+            "taskbar hicon centre-y {cy:.3} is not centred"
         );
     }
 
@@ -1225,7 +1133,7 @@ mod windows_icon_tests {
             runtime_tray_icon_image(IconTheme::Dark, DEFAULT_ICON_ACCENT, 20).rgba(),
             20,
         );
-        assert!((0.64..=0.76).contains(&w), "micro glyph width: {w:.3}");
+        assert!((0.56..=0.70).contains(&w), "micro glyph width: {w:.3}");
         assert!((0.46..=0.54).contains(&h), "micro glyph height: {h:.3}");
         assert!((cx - 0.5).abs() <= 0.03, "micro centre-x: {cx:.3}");
         assert!((0.48..=0.52).contains(&cy), "micro centre-y: {cy:.3}");
@@ -1365,39 +1273,46 @@ fn runtime_icon_image(
     draw_rounded_rect(&mut rgba, size, background_rect, background);
 
     #[cfg(target_os = "macos")]
-    let bar_rects = [
-        (129, 290, 38, 70, 19),
-        (183, 220, 38, 140, 19),
-        (237, 152, 38, 208, 19),
-        (291, 240, 38, 120, 19),
-        (345, 298, 38, 62, 19),
-    ];
-
+    let glyph_width = scale(size, canonical_mark::CANONICAL_MARK_WIDTH);
     #[cfg(not(target_os = "macos"))]
-    let bar_rects = [
-        (88, 328, 48, 88, 24),
-        (160, 239, 48, 177, 24),
-        (232, 153, 48, 263, 24),
-        (304, 264, 48, 152, 24),
-        (376, 338, 48, 78, 24),
-    ];
-
-    for (x, y, width, height, radius) in bar_rects {
-        draw_rounded_rect(
-            &mut rgba,
-            size,
-            IconRect {
-                x: scale(size, x),
-                y: scale(size, y),
-                width: scale(size, width),
-                height: scale(size, height),
-                radius: scale(size, radius),
-            },
-            accent,
-        );
-    }
+    let glyph_width = scale(size, 368);
+    draw_canonical_mark(&mut rgba, size, accent, glyph_width);
 
     tauri::image::Image::new_owned(rgba, size, size)
+}
+
+/// Draw the canonical mark with one uniform scale and a centered bounding box.
+/// Every coordinate, width, height, and radius comes from the generated copy of
+/// `icons/verenu-mark.svg`.
+fn draw_canonical_mark(rgba: &mut [u8], canvas_size: u32, color: [u8; 4], target_width: u32) {
+    use canonical_mark::{CANONICAL_BARS, CANONICAL_MARK_HEIGHT, CANONICAL_MARK_WIDTH};
+
+    let target_width = target_width.max(1);
+    let target_height = ((target_width as f64 * f64::from(CANONICAL_MARK_HEIGHT)
+        / f64::from(CANONICAL_MARK_WIDTH))
+    .round() as u32)
+        .max(1);
+    let origin_x = canvas_size.saturating_sub(target_width) / 2;
+    let origin_y = canvas_size.saturating_sub(target_height) / 2;
+    let map = |value: u32| {
+        ((u64::from(value) * u64::from(target_width) + u64::from(CANONICAL_MARK_WIDTH / 2))
+            / u64::from(CANONICAL_MARK_WIDTH)) as u32
+    };
+
+    for bar in CANONICAL_BARS {
+        draw_rounded_rect(
+            rgba,
+            canvas_size,
+            IconRect {
+                x: origin_x + map(bar.x),
+                y: origin_y + map(bar.y),
+                width: map(bar.width).max(1),
+                height: map(bar.height).max(1),
+                radius: map(bar.radius).max(1),
+            },
+            color,
+        );
+    }
 }
 
 fn scale(size: u32, value: u32) -> u32 {
