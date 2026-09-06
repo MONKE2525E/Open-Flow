@@ -35,7 +35,6 @@ type SettingsValueMap = {
   dual_transcription_enabled: boolean;
   cleanup_fallback_models: string[];
   cleanup_enabled: boolean;
-  repair_hotkey: string[];
   default_tone: ToneId;
   cleanup_intensity: CleanupIntensity;
   app_mappings: AppMapping[];

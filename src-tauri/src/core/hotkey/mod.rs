@@ -99,11 +99,7 @@ mod noop {
     pub fn is_hotkey_available(_key1: &str, _key2: &str) -> bool {
         true
     }
-    pub fn is_repair_hotkey_available(_key1: &str, _key2: &str, _key3: &str) -> bool {
-        true
-    }
     pub fn update_keys(_k1: u32, _k2: u32) {}
-    pub fn update_repair_keys(_k1: u32, _k2: u32, _k3: u32) {}
     pub fn reset_chord_state() {}
     pub fn set_handless_active(_v: bool) {}
     pub fn begin_synthetic_paste_suppression(_duration_ms: u64) {}
@@ -120,14 +116,13 @@ mod noop {
         0
     }
     #[allow(clippy::too_many_arguments)]
-    pub fn start<P, R, H, C, E, L, O>(
+    pub fn start<P, R, H, C, E, L>(
         _on_press: P,
         _on_release: R,
         _on_handless: H,
         _on_cancel: C,
         _on_escape: E,
         _on_copy_last: L,
-        _on_repair_open: O,
     ) -> Result<std::thread::JoinHandle<()>, String>
     where
         P: Fn() + Send + Sync + 'static,
@@ -136,7 +131,6 @@ mod noop {
         C: Fn() + Send + Sync + 'static,
         E: Fn() + Send + Sync + 'static,
         L: Fn() + Send + Sync + 'static,
-        O: Fn() + Send + Sync + 'static,
     {
         Ok(std::thread::spawn(|| {}))
     }

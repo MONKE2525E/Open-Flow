@@ -761,7 +761,6 @@ fn syncable_settings_exclude_device_local_keys() {
         crate::data::store::MICROPHONE_DEVICE,
         crate::data::store::MIC_GAIN,
         crate::data::store::HOTKEY,
-        crate::data::store::REPAIR_HOTKEY,
         crate::data::store::AUTOSTART_ENABLED,
         crate::data::store::SETUP_COMPLETE,
         crate::data::store::FORCE_SETUP_ON_LAUNCH,

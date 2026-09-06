@@ -41,7 +41,6 @@ export function clearSettingsSearchNavigation(nonce: number): void {
 const BASE_ENTRIES: SettingsSearchEntry[] = [
   { id: 'general-hotkey', section: 'general', label: 'Hotkey', description: 'Hold to record and release to transcribe', target: 'general-hotkey', keywords: ['shortcut', 'keyboard', 'keybind', 'record'] },
   { id: 'general-copy-last', section: 'general', label: 'Copy last dictation', description: 'Copy the previous dictation to the clipboard', target: 'general-copy-last', keywords: ['clipboard', 'shortcut'] },
-  { id: 'general-report', section: 'general', label: 'Report a dictation issue', description: 'Open the complaint box after a dictation', target: 'general-report', keywords: ['repair', 'feedback', 'shortcut'] },
   { id: 'general-language', section: 'general', label: 'Spoken language', description: 'Choose the language transcription should expect', target: 'general-language', keywords: ['locale', 'speech', 'transcription'] },
   { id: 'general-microphone', section: 'general', label: 'Microphone device', description: 'Choose the microphone used for dictation', target: 'general-microphone', keywords: ['mic', 'input', 'audio'] },
   { id: 'general-appearance', section: 'general', label: 'Appearance', description: 'Choose the light, dark, or system theme', target: 'general-appearance', keywords: ['theme', 'light mode', 'dark mode', 'system'] },

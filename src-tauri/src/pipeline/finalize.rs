@@ -17,7 +17,6 @@ pub(super) struct PipelineCompletionContext<'a> {
     pub(super) event_only: bool,
     pub(super) caps_lock_on: bool,
     pub(super) context: Option<&'a db::Context>,
-    pub(super) browser_domain: Option<String>,
 }
 
 fn dictionary_protects_initial_case(text: &str, entries: &[db::DictionaryEntry]) -> bool {
@@ -321,11 +320,6 @@ pub(super) async fn finalize_pipeline_completion(
         }
     };
     let injected_text = injected.text;
-    let should_offer_repair = !ctx.event_only
-        && !self_inject
-        && injected.case_decision != "inject_failed"
-        && injected.case_decision != "clipboard_fallback"
-        && clipboard_warning.is_none();
     log::debug!(
         "pipeline: delivery done contextual_formatting={} context_state={} case_decision={} probe_source={} selection_state={} output_chars={} stage_ms={}",
         ctx.cfg.contextual_formatting_enabled,
@@ -358,23 +352,6 @@ pub(super) async fn finalize_pipeline_completion(
         super::show_clipboard_warning_pill(app, message);
     } else {
         hide_pill(app);
-    }
-
-    if should_offer_repair {
-        if let Some(context) = ctx.context {
-            super::begin_feedback(
-                app,
-                state,
-                ctx.raw,
-                ctx.final_text_before_dict,
-                &private_text,
-                ctx.process_name.clone(),
-                ctx.browser_domain,
-                context,
-                ctx.dict_entries,
-                ctx.cfg,
-            );
-        }
     }
 
     // Clipboard-expanded output is intentionally not monitored: its exact

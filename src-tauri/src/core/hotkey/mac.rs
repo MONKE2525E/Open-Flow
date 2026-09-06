@@ -102,17 +102,6 @@ static CURRENT_HOTKEY: Mutex<Option<HotKey>> = Mutex::new(None);
 static MAIN_HOTKEY_ID: AtomicU32 = AtomicU32::new(0);
 static ESCAPE_HOTKEY: OnceLock<HotKey> = OnceLock::new();
 
-// User-configurable "open the repair complaint box" hotkey: two modifiers
-// plus one regular trigger key, default Ctrl+Alt+Z. Matches the Windows
-// backend's shape (see its REPAIR_MOD1 doc comment for why a modifier-only
-// combo is disallowed there) even though Carbon's RegisterEventHotKey was
-// never at risk of that specific bug itself.
-static REPAIR_KEY1: AtomicU32 = AtomicU32::new(ID_CONTROL);
-static REPAIR_KEY2: AtomicU32 = AtomicU32::new(ID_ALT);
-static REPAIR_KEY3: AtomicU32 = AtomicU32::new(REGULAR_BASE + 6); // KeyZ
-static CURRENT_REPAIR_HOTKEY: Mutex<Option<HotKey>> = Mutex::new(None);
-static REPAIR_HOTKEY_ID: AtomicU32 = AtomicU32::new(0);
-static REPAIR_OPEN_CB: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
 // ⌥⌘C: always-registered fallback to re-copy the last dictation, in case
 // paste failed in a way the pipeline's own detection missed. Unlike Escape
 // this is registered permanently at startup, not just while recording.
@@ -147,13 +136,6 @@ pub fn update_keys(k1: u32, k2: u32) {
     register_main_hotkey();
 }
 
-pub fn update_repair_keys(k1: u32, k2: u32, k3: u32) {
-    REPAIR_KEY1.store(k1, Ordering::SeqCst);
-    REPAIR_KEY2.store(k2, Ordering::SeqCst);
-    REPAIR_KEY3.store(k3, Ordering::SeqCst);
-    register_repair_hotkey();
-}
-
 pub fn reset_chord_state() {
     CHORD_ACTIVE.store(false, Ordering::SeqCst);
     ESCAPE_CANCELLED.store(false, Ordering::SeqCst);
@@ -182,15 +164,6 @@ pub fn caps_lock_is_on() -> bool {
 /// real key — Carbon hotkeys cannot be modifier-only.
 pub fn is_hotkey_available(key1: &str, key2: &str) -> bool {
     build_hotkey(map_code_to_vk(key1), map_code_to_vk(key2)).is_some()
-}
-
-pub fn is_repair_hotkey_available(key1: &str, key2: &str, key3: &str) -> bool {
-    build_hotkey_from(&[
-        map_code_to_vk(key1),
-        map_code_to_vk(key2),
-        map_code_to_vk(key3),
-    ])
-    .is_some()
 }
 
 /// Map a JS `KeyboardEvent.code` to this backend's private key id.
@@ -391,12 +364,6 @@ fn build_hotkey(k1: u32, k2: u32) -> Option<HotKey> {
     build_hotkey_from(&[k1, k2])
 }
 
-/// Same as `build_hotkey` but over an arbitrary number of ids — used by the
-/// repair-open hotkey, which is 2 modifiers + 1 trigger key. Already rejects
-/// a modifier-only combination (returns `None` since `code` stays unset), so
-/// unlike the Windows backend's low-level key hook, Carbon's
-/// `RegisterEventHotKey` was never at risk of intercepting a bare modifier
-/// press on its own — it only ever fires on the complete registered combo.
 fn build_hotkey_from(ids: &[u32]) -> Option<HotKey> {
     let mut mods = Modifiers::empty();
     let mut code: Option<Code> = None;
@@ -474,36 +441,6 @@ fn register_main_hotkey() {
     }
 }
 
-fn register_repair_hotkey() {
-    let Some(mgr) = MANAGER.get() else {
-        return;
-    };
-    let hk = build_hotkey_from(&[
-        REPAIR_KEY1.load(Ordering::SeqCst),
-        REPAIR_KEY2.load(Ordering::SeqCst),
-        REPAIR_KEY3.load(Ordering::SeqCst),
-    ]);
-    let Ok(mut cur) = CURRENT_REPAIR_HOTKEY.lock() else {
-        return;
-    };
-    if let Some(prev) = cur.take() {
-        let _ = mgr.unregister(prev);
-        REPAIR_HOTKEY_ID.store(0, Ordering::SeqCst);
-    }
-    let Some(hk) = hk else {
-        // Unconfigured or unregistrable — leave nothing registered rather
-        // than falling back to a combo the user never chose.
-        return;
-    };
-    match mgr.register(hk) {
-        Ok(()) => {
-            *cur = Some(hk);
-            REPAIR_HOTKEY_ID.store(hk.id(), Ordering::SeqCst);
-        }
-        Err(e) => log::warn!("hotkey: failed to register repair-open hotkey: {e}"),
-    }
-}
-
 fn register_copy_last_hotkey() {
     let Some(mgr) = MANAGER.get() else {
         return;
@@ -559,16 +496,6 @@ fn handle_hotkey_event(ev: GlobalHotKeyEvent) {
     if COPY_LAST_HOTKEY.get().is_some_and(|h| h.id() == ev.id) {
         if matches!(ev.state, HotKeyState::Pressed) {
             if let Some(cb) = COPY_LAST_CB.get() {
-                cb();
-            }
-        }
-        return;
-    }
-    if REPAIR_HOTKEY_ID.load(Ordering::SeqCst) != 0
-        && ev.id == REPAIR_HOTKEY_ID.load(Ordering::SeqCst)
-    {
-        if matches!(ev.state, HotKeyState::Pressed) {
-            if let Some(cb) = REPAIR_OPEN_CB.get() {
                 cb();
             }
         }
@@ -644,14 +571,13 @@ fn on_escape_pressed() {
 // --- start -----------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
-pub fn start<P, R, H, C, E, L, O>(
+pub fn start<P, R, H, C, E, L>(
     on_press: P,
     on_release: R,
     on_handless: H,
     on_cancel: C,
     on_escape: E,
     on_copy_last: L,
-    on_repair_open: O,
 ) -> Result<std::thread::JoinHandle<()>, String>
 where
     P: Fn() + Send + Sync + 'static,
@@ -660,7 +586,6 @@ where
     C: Fn() + Send + Sync + 'static,
     E: Fn() + Send + Sync + 'static,
     L: Fn() + Send + Sync + 'static,
-    O: Fn() + Send + Sync + 'static,
 {
     if MANAGER.get().is_some() {
         log::warn!("hotkey: global hotkey manager already initialized");
@@ -673,7 +598,6 @@ where
     let _ = CANCEL_CB.set(Box::new(on_cancel));
     let _ = ESCAPE_CB.set(Box::new(on_escape));
     let _ = COPY_LAST_CB.set(Box::new(on_copy_last));
-    let _ = REPAIR_OPEN_CB.set(Box::new(on_repair_open));
 
     // Created here (on the main thread, from Tauri `setup`) because the crate
     // installs its Carbon event handler on the application event target, which
@@ -686,7 +610,6 @@ where
     }
     register_main_hotkey();
     register_copy_last_hotkey();
-    register_repair_hotkey();
 
     // Drain hotkey events on a background thread; the receiver is a process-wide
     // channel fed by the Carbon handler, so it is safe to poll off-thread.

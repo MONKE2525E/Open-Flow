@@ -366,24 +366,6 @@ pub async fn cancel_recording_with_resume(
     stash_cancelled_capture(app, state, captured_audio, CaptureOrigin::UserCancelled);
 }
 
-/// Stops and discards a recording that belongs to a transient flow such as
-/// repair feedback. Unlike normal dictation cancellation, this never stashes
-/// audio for resume and never shows the cancelled-dictation affordance.
-pub async fn discard_recording(app: &AppHandle, state: &SharedState) {
-    let Some((session, exclusive_mic_session_id)) = state::take_recording_plain(state) else {
-        if state_is_idle(state) {
-            hide_pill(app);
-        }
-        return;
-    };
-    crate::media::sound::coordinated_unmute();
-    crate::system::media_control::end_dictation_media_pause();
-    let _ = stop_and_capture_audio(app, session, exclusive_mic_session_id).await;
-    if state_is_idle(state) {
-        hide_pill(app);
-    }
-}
-
 /// True when the recording lifecycle is currently `Idle`.
 fn state_is_idle(state: &SharedState) -> bool {
     lock_state(state).is_ok_and(|st| st.lifecycle.is_idle())

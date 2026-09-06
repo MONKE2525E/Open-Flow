@@ -332,110 +332,6 @@ pub async fn stop_and_transcribe_input(
 }
 
 #[tauri::command]
-pub async fn start_repair_complaint_recording(
-    app: AppHandle,
-    state: tauri::State<'_, SharedState>,
-) -> Result<(), String> {
-    pipeline::reserve_starting(state.inner())?;
-    pipeline::start_recording_session_ex(
-        &app,
-        state.inner(),
-        "repair_recording",
-        false,
-        None,
-        pipeline::RecordingStartOptions {
-            show_recording_pill: true,
-            emit_globally: false,
-            start_cue_delay_ms: None,
-            durable: false,
-        },
-    )
-}
-
-#[tauri::command]
-pub async fn stop_repair_complaint_recording(
-    app: AppHandle,
-    state: tauri::State<'_, SharedState>,
-) -> Result<(), String> {
-    crate::core::hotkey::set_handless_active(false);
-    tauri::async_runtime::spawn(pipeline::finish_complaint_recording(
-        app.clone(),
-        state.inner().clone(),
-    ));
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn repair_positive_feedback(
-    app: AppHandle,
-    state: tauri::State<'_, SharedState>,
-) -> Result<(), String> {
-    pipeline::clear_repair(state.inner());
-    pipeline::hide_pill(&app);
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn repair_enter_input(
-    app: AppHandle,
-    _state: tauri::State<'_, SharedState>,
-) -> Result<(), String> {
-    pipeline::enter_repair_input(&app);
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn repair_cancel(
-    app: AppHandle,
-    state: tauri::State<'_, SharedState>,
-) -> Result<(), String> {
-    // A stale pill event must never stop a newer normal dictation. A repair
-    // session is cleared synchronously when a new dictation reserves its
-    // lifecycle, so only discard an active microphone session while repair
-    // still owns the transient state.
-    let owns_repair = state
-        .inner()
-        .lock()
-        .map(|locked| locked.repair.is_some())
-        .unwrap_or(false);
-    if owns_repair {
-        pipeline::clear_repair(state.inner());
-        pipeline::discard_recording(&app, state.inner()).await;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn repair_analyze(
-    app: AppHandle,
-    state: tauri::State<'_, SharedState>,
-    complaint: String,
-) -> Result<(), String> {
-    pipeline::diagnose_repair(app.clone(), state.inner().clone(), complaint)
-        .await
-        .map_err(|error| {
-            let message = crate::api::user_facing_error(&error);
-            pipeline::emit_repair_error(&app, &message);
-            message
-        })
-}
-
-#[tauri::command]
-pub async fn repair_apply(
-    app: AppHandle,
-    state: tauri::State<'_, SharedState>,
-    proposal_id: u64,
-) -> Result<String, String> {
-    pipeline::apply_repair(app.clone(), state.inner().clone(), proposal_id)
-        .await
-        .map_err(|error| {
-            let message = crate::api::user_facing_error(&error);
-            pipeline::emit_repair_error(&app, &message);
-            message
-        })
-}
-
-#[tauri::command]
 pub async fn stop_recording(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
@@ -642,10 +538,7 @@ pub fn set_pill_size(
     };
 
     // Upper bounds are backstops against a bad frontend measurement, not the
-    // expected size — they must clear the largest real layout, which is the
-    // repair error/proposal card: its message text is provider-supplied and
-    // effectively unbounded in length, so it needs far more vertical room
-    // than the single-line capsule every other state uses.
+    // expected size. They leave room for transient status and error messages.
     let width_points = if width.is_finite() {
         width.clamp(60.0, 440.0).round()
     } else {

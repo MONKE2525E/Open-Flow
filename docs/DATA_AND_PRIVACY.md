@@ -84,26 +84,6 @@ That means raw transcription text leaves your device when cleanup is enabled, in
 
 With Dual model transcription enabled, the same audio may be sent to two or more providers from the configured transcription chain until two candidates succeed. Both successful candidates are then sent to the selected cleanup provider. Failed candidates do not fail a successful transcription.
 
-### Post-dictation repair diagnosis
-
-The floating pill's repair flow has no telemetry, analytics event, remote
-complaint store, or Verenu feedback backend. A provider request happens only
-after you enter or dictate a complaint and press **Analyze**. The request uses
-the provider/model already configured for Verenu and contains only the
-complaint plus bounded diagnostic context from that dictation: raw,
-cleaned-before-dictionary, and private delivered-text excerpts; the target
-executable and bare browser domain; the resolved context identity; the
-allowlisted settings; and dictionary records that participated in the
-pipeline.
-
-Repair diagnosis does not send audio, API keys, history, full URLs or page
-titles, actual clipboard-restored text, unrelated settings or applications,
-full dictionary/snippet data, prompt overrides, or internal logs. Complaint
-text and the diagnostic snapshot are transient. The model can propose only a
-small typed allowlist of dictionary repairs and global setting changes. Rust
-validates the proposal and the pill requires explicit **Apply** approval before
-any local configuration is mutated.
-
 ### Optional context
 
 Depending on your settings and the feature being used, Verenu may also send:
@@ -176,7 +156,6 @@ That said, once data is sent to a third-party AI provider, that provider's reten
 | Local transcription + cloud cleanup | audio, local model, local capture state | transcript text and cleanup context to selected cleanup provider |
 | Cloud transcription | local capture state | audio to selected transcription provider |
 | Cleanup | local settings and local cache | raw transcription text and cleanup context to selected cleanup provider |
-| Repair diagnosis | complaint and bounded in-memory snapshot | complaint and allowlisted bounded diagnostic context to the configured repair provider, only after Analyze |
 | Context vocabulary and snippets | SQLite | nothing by default |
 | Context website check | current app state stays local | the typed domain, via a plain DNS lookup, when you attach a website to a context group |
 | Auto-learn | local monitoring data and promoted entries | nothing by default |
