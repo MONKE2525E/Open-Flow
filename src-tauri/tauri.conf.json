@@ -3,7 +3,7 @@
   "productName": "Verenu",
   "mainBinaryName": "Verenu",
   "identifier": "com.verenu.app",
-  "version": "0.18.1",
+  "version": "0.17.0-nightly.20260906",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://127.0.0.1:1420",
@@ -71,7 +71,8 @@
         "installMode": "currentUser"
       },
       "wix": {
-        "language": "en-US"
+        "language": "en-US",
+        "version": "0.17.0.0"
       }
     },
     "macOS": {
