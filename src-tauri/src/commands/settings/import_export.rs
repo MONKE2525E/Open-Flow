@@ -150,6 +150,7 @@ pub async fn import_data(
         let mut settings_applied = 0usize;
         let mut settings_skipped = 0usize;
         let mut runtime_icon_setting_applied = false;
+        #[cfg(target_os = "windows")]
         let mut appearance_setting_applied = false;
         let mut history_prune_days: Option<i64> = None;
 
@@ -168,6 +169,7 @@ pub async fn import_data(
                         if crate::app_tray::setting_updates_runtime_icons(key) {
                             runtime_icon_setting_applied = true;
                         }
+                        #[cfg(target_os = "windows")]
                         if key == store::APPEARANCE_MODE {
                             appearance_setting_applied = true;
                         }
