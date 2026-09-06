@@ -104,7 +104,7 @@ fn setting_audit_empty_store_resolves_to_documented_defaults() {
     );
     assert_eq!(
         cfg.cleanup_default_model,
-        format!("{GROQ}/{GROQ_QWEN_3_6_27B_MODEL}")
+        format!("{GROQ}/{GROQ_QWEN_3_8_27B_MODEL}")
     );
     assert!(cfg.transcription_fallback_models.is_empty());
     assert!(cfg.cleanup_fallback_models.is_empty());
@@ -170,7 +170,7 @@ fn setting_audit_malformed_model_id_resolves_to_safe_default() {
     );
     assert_eq!(
         cfg.cleanup_default_model,
-        format!("{GROQ}/{GROQ_QWEN_3_6_27B_MODEL}")
+        format!("{GROQ}/{GROQ_QWEN_3_8_27B_MODEL}")
     );
 }
 
@@ -189,12 +189,12 @@ fn deprecated_groq_cleanup_models_migrate_to_no_thinking_qwen() {
     let cfg = load_pipeline_config(&store);
     assert_eq!(
         cfg.cleanup_default_model,
-        format!("{GROQ}/{GROQ_QWEN_3_6_27B_MODEL}")
+        format!("{GROQ}/{GROQ_QWEN_3_8_27B_MODEL}")
     );
     assert_eq!(
         cfg.cleanup_fallback_models,
         vec![
-            format!("{GROQ}/{GROQ_QWEN_3_6_27B_MODEL}"),
+            format!("{GROQ}/{GROQ_QWEN_3_8_27B_MODEL}"),
             "openai/gpt-4o-mini".to_string()
         ]
     );
@@ -215,12 +215,38 @@ fn deprecated_groq_llama_70b_migrates_to_qwen() {
     let cfg = load_pipeline_config(&store);
     assert_eq!(
         cfg.cleanup_default_model,
-        format!("{GROQ}/{GROQ_QWEN_3_6_27B_MODEL}")
+        format!("{GROQ}/{GROQ_QWEN_3_8_27B_MODEL}")
     );
     assert_eq!(
         cfg.cleanup_fallback_models,
         vec![
-            format!("{GROQ}/{GROQ_QWEN_3_6_27B_MODEL}"),
+            format!("{GROQ}/{GROQ_QWEN_3_8_27B_MODEL}"),
+            "openai/gpt-4o-mini".to_string()
+        ]
+    );
+}
+
+#[test]
+fn deprecated_qwen_36_migrates_to_qwen_38() {
+    let store = SettingsSnapshot::from_pairs([
+        (
+            CLEANUP_DEFAULT_MODEL.to_string(),
+            json!("groq/qwen/qwen3.6-27b"),
+        ),
+        (
+            CLEANUP_FALLBACK_MODELS.to_string(),
+            json!(["groq/qwen/qwen3.6-27b", "openai/gpt-4o-mini"]),
+        ),
+    ]);
+    let cfg = load_pipeline_config(&store);
+    assert_eq!(
+        cfg.cleanup_default_model,
+        format!("{GROQ}/{GROQ_QWEN_3_8_27B_MODEL}")
+    );
+    assert_eq!(
+        cfg.cleanup_fallback_models,
+        vec![
+            format!("{GROQ}/{GROQ_QWEN_3_8_27B_MODEL}"),
             "openai/gpt-4o-mini".to_string()
         ]
     );

@@ -9,7 +9,13 @@
 
 import { invoke } from '../../tauri';
 import type { ProviderId } from '../../settings';
-import { modelId, recommendedModels, type TaskType, type UiProviderId } from './models';
+import {
+  GROQ_QWEN_3_8_27B_MODEL,
+  modelId,
+  recommendedModels,
+  type TaskType,
+  type UiProviderId,
+} from './models';
 
 export type Hardware = {
   totalRamMb: number;
@@ -234,7 +240,13 @@ function transcriptionModelFor(provider: UiProviderId, tier: 'standard' | 'premi
 function cleanupModelFor(provider: UiProviderId | undefined, tier: 'standard' | 'premium'): string | null {
   if (!provider) return null;
   const entry = recommendedModels.cleanup[provider];
-  return entry ? modelId(provider, entry[tier]) : null;
+  if (!entry) return null;
+  // Groq's former standard cleanup model is being retired. Keep the catalog
+  // entry for recognizing old selections, but never put it into a new preset.
+  if (provider === 'groq' && tier === 'standard') {
+    return modelId(provider, GROQ_QWEN_3_8_27B_MODEL);
+  }
+  return modelId(provider, entry[tier]);
 }
 
 // ── Public: build the preset list ─────────────────────────────────────────
