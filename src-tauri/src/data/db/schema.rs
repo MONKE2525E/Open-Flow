@@ -163,6 +163,12 @@ CREATE INDEX IF NOT EXISTS idx_api_calls_created_at
   ON api_calls(created_at);
 CREATE INDEX IF NOT EXISTS idx_api_calls_transcription_id
   ON api_calls(transcription_id);
+CREATE TABLE IF NOT EXISTS openrouter_pricing (
+  model_id                TEXT PRIMARY KEY COLLATE NOCASE,
+  prompt_usd_per_token    REAL NOT NULL,
+  completion_usd_per_token REAL NOT NULL,
+  fetched_at              INTEGER NOT NULL
+);
 ";
 
 /// Opens the database, and if it (or its WAL sidecar) is corrupt, quarantines
@@ -711,6 +717,21 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
                 "ALTER TABLE context_targets ADD COLUMN developer TEXT;",
             )?;
             conn.execute_batch("PRAGMA user_version = 23;")?;
+            Ok(())
+        })?;
+    }
+    if user_version < 24 {
+        log::info!("db: migrating schema {user_version} -> 24");
+        run_migration(&mut conn, |conn| {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS openrouter_pricing (
+                   model_id                 TEXT PRIMARY KEY COLLATE NOCASE,
+                   prompt_usd_per_token     REAL NOT NULL,
+                   completion_usd_per_token REAL NOT NULL,
+                   fetched_at               INTEGER NOT NULL
+                 );
+                 PRAGMA user_version = 24;",
+            )?;
             Ok(())
         })?;
     }

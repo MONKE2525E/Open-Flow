@@ -13,6 +13,7 @@
   import CostBreakdown from './insights/CostBreakdown.svelte';
   import HourStrip from './insights/HourStrip.svelte';
   import WordStats from './insights/WordStats.svelte';
+  import type { PricingSnapshot } from './insights/pricing';
   import { icons } from '../icons';
   import { contextsStore, loadContexts, orderedContexts } from '../contextsStore.svelte';
   import { EMPTY_INSIGHTS, RANGE_OPTIONS, type InsightsPayload, type InsightsRange } from './insights/types';
@@ -29,6 +30,7 @@
   let error = $state('');
   let rangeOpen = $state(false);
   let displayVersion = $state(0);
+  let pricing = $state<PricingSnapshot | null>(null);
 
   let fetchToken = 0;
   let mounted = false;
@@ -104,6 +106,15 @@
     mounted = true;
     void loadContexts();
     load();
+    invoke<PricingSnapshot>('get_insights_pricing')
+      .then((snapshot) => {
+        if (mounted) pricing = snapshot;
+      })
+      .catch((err) => {
+        // The cost card still has its bundled fallbacks when the catalog is
+        // unavailable, so a pricing refresh must not make Insights fail.
+        console.warn('OpenRouter pricing refresh failed:', err);
+      });
     // Events keep dictations current; reconcile missed events and date rollover
     // once a minute while visible, and immediately when the window returns.
     const poll = startPolling(() => load({ silent: true }), 60_000, { immediate: false });
@@ -257,7 +268,7 @@
         <StreakHeatmap daily={data.streak_daily} streak={data.streak} historyStartedOn={data.history_started_on} />
         <HourStrip hourly={data.hourly} />
         <WordStats words={data.words} cleanup={data.cleanup} totals={data.totals} />
-        <CostBreakdown providers={data.providers} {rangeLabel} />
+        <CostBreakdown providers={data.providers} {rangeLabel} {pricing} />
       </div>
     {/key}
   {/if}
@@ -450,3 +461,4 @@
     .skeleton { animation-duration: 2.6s; }
   }
 </style>
+

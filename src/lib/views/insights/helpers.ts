@@ -21,7 +21,17 @@ export function fmtUsd(n: number | null): string {
   if (n === 0) return '$0.00';
   // Only small *positive* amounts render as "<$0.01" — a negative amount
   // must format normally instead of being swallowed by the tiny-value branch.
-  if (n > 0 && n < 0.01) return '<$0.01';
+  // Keep sub-cent estimates visible. Significant digits avoid turning a tiny
+  // but real API charge into either $0.00 or an unhelpful "under one cent".
+  if (n > 0 && n < 0.01) {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumSignificantDigits: 2,
+      maximumSignificantDigits: 4,
+      useGrouping: false,
+    }).format(n);
+  }
   if (n < 0) {
     // Keep the minus before the dollar sign, and let a value that rounds to
     // zero (e.g. -0.004) render as plain $0.00 rather than "$-0.00".

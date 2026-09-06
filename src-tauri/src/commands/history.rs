@@ -60,6 +60,41 @@ pub async fn get_insights(
     .await
 }
 
+/// Returns the locally cached OpenRouter rate table, refreshing it at most
+/// once every 48 hours. A failed refresh falls back to the last good snapshot
+/// so a pricing outage never blocks the Insights page.
+#[tauri::command]
+pub async fn get_insights_pricing(app: AppHandle) -> Result<db::PricingSnapshot, String> {
+    let db = db_state(&app);
+    let fresh_db = db.clone();
+    let fresh = run_blocking("get_insights_pricing_freshness", move || {
+        db::pricing_cache_is_fresh(&fresh_db).map_err(|e| e.to_string())
+    })
+    .await?;
+
+    if !fresh {
+        match crate::api::openrouter::fetch_model_pricing().await {
+            Ok(rates) => {
+                let fetched_at = chrono::Utc::now().timestamp();
+                let write_db = db.clone();
+                run_blocking("save_insights_pricing", move || {
+                    db::replace_pricing_cache(&write_db, fetched_at, &rates)
+                        .map_err(|e| e.to_string())
+                })
+                .await?;
+            }
+            Err(error) => {
+                log::warn!("insights: OpenRouter pricing refresh failed: {error}");
+            }
+        }
+    }
+
+    run_blocking("get_insights_pricing", move || {
+        db::query_pricing_snapshot(&db).map_err(|e| e.to_string())
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn count_old_transcriptions(app: AppHandle, retention: String) -> Result<i64, String> {
     let Some(days) = store::history_retention_days(&retention) else {

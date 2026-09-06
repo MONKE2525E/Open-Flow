@@ -1417,6 +1417,8 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       const id = raw === null || raw === undefined ? null : Number(raw);
       return devInsights(Number(args?.days ?? 30), id) as T;
     }
+    case 'get_insights_pricing':
+      return { fetched_at: 0, rates: [] } as T;
     case 'get_memory_mb':
       return 0 as T;
     case 'local_models_supported_on_this_platform':

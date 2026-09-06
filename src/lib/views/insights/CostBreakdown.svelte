@@ -1,12 +1,16 @@
 <script lang="ts">
-  import { estimateCost } from './pricing';
+  import { estimateCost, type PricingSnapshot } from './pricing';
   import { fmtDuration, fmtNumber, fmtUsd } from './helpers';
   import DonutChart, { type DonutSegment } from './DonutChart.svelte';
   import type { InsightsProviderUsage } from './types';
 
-  let { providers, rangeLabel }: { providers: InsightsProviderUsage[]; rangeLabel: string } = $props();
+  let { providers, rangeLabel, pricing }: {
+    providers: InsightsProviderUsage[];
+    rangeLabel: string;
+    pricing: PricingSnapshot | null;
+  } = $props();
 
-  const summary = $derived(estimateCost(providers));
+  const summary = $derived(estimateCost(providers, pricing));
 
   /* Accent-derived ramp — the accent is user-swappable, so no fixed hues. */
   function segmentColor(index: number, count: number): string {
