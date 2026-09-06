@@ -1,10 +1,9 @@
 import type { InsightsProviderUsage } from './types';
 
 /*
- * ponytail: static price table. Published list rates, checked against provider
- * pricing pages; they drift. Upgrade path is a rates file shipped with the app
- * (or fetched from api.verenu.com alongside provider-status) if drift ever
- * matters — not a runtime OpenRouter lookup, which doesn't price audio models.
+ * Bundled fallback rates for audio models and providers that OpenRouter does
+ * not publish. Token-priced cleanup models use the cached OpenRouter snapshot.
+ * The refresh is performed by the desktop backend and persisted locally.
  *
  * Everything here is an ESTIMATE and must be labelled as such in the UI.
  * Verenu never bills anyone; users pay their provider directly.
@@ -13,6 +12,17 @@ import type { InsightsProviderUsage } from './types';
 type Rate =
   | { kind: 'audio'; usd_per_hour: number }
   | { kind: 'token'; usd_per_m_in: number; usd_per_m_out: number };
+
+export interface PricingRate {
+  model_id: string;
+  prompt_usd_per_token: number;
+  completion_usd_per_token: number;
+}
+
+export interface PricingSnapshot {
+  fetched_at: number;
+  rates: PricingRate[];
+}
 
 export const PRICING: Record<string, Rate> = {
   // Transcription — billed on audio duration
@@ -49,11 +59,36 @@ const CHARS_PER_TOKEN = 4;
 /** Backend model ids may carry a provider prefix ("groq/whisper-large-v3-turbo",
  * "models/gemini-3.5-flash") or inconsistent casing — normalize before lookup. */
 function normalizeModelId(model: string | null | undefined): string {
-  return String(model ?? '').trim().toLowerCase().replace(/^.*\//, '');
+  return String(model ?? '').trim().toLowerCase();
 }
 
-function lookupRate(usage: InsightsProviderUsage): Rate | null {
-  const key = normalizeModelId(usage.model);
+function shortModelId(model: string): string {
+  return model.replace(/^.*\//, '');
+}
+
+function lookupOpenRouterRate(usage: InsightsProviderUsage, snapshot: PricingSnapshot | null): Rate | null {
+  if (usage.task === 'transcription' || !snapshot) return null;
+  const model = normalizeModelId(usage.model);
+  const short = shortModelId(model);
+  const provider = String(usage.provider ?? '').trim().toLowerCase();
+  const providerQualified = provider ? `${provider}/${short}` : null;
+  const exact = snapshot.rates.find((rate) => {
+    const id = normalizeModelId(rate.model_id);
+    return id === model || (providerQualified !== null && id === providerQualified);
+  });
+  const published = exact ?? snapshot.rates.find((rate) => shortModelId(normalizeModelId(rate.model_id)) === short);
+  if (!published) return null;
+  return {
+    kind: 'token',
+    usd_per_m_in: published.prompt_usd_per_token * 1e6,
+    usd_per_m_out: published.completion_usd_per_token * 1e6,
+  };
+}
+
+function lookupRate(usage: InsightsProviderUsage, snapshot: PricingSnapshot | null): Rate | null {
+  const key = shortModelId(normalizeModelId(usage.model));
+  const openRouterRate = lookupOpenRouterRate(usage, snapshot);
+  if (openRouterRate) return openRouterRate;
   // The backend writes tasks in lowercase, but normalize defensively so a
   // mixed-case or whitespace-padded value still matches the override keys.
   const task = String(usage.task ?? '').trim().toLowerCase();
@@ -61,8 +96,8 @@ function lookupRate(usage: InsightsProviderUsage): Rate | null {
 }
 
 /** Cost in USD for one model's usage, or null when the model has no known rate. */
-function modelCost(usage: InsightsProviderUsage): number | null {
-  const rate = lookupRate(usage);
+function modelCost(usage: InsightsProviderUsage, snapshot: PricingSnapshot | null): number | null {
+  const rate = lookupRate(usage, snapshot);
   if (!rate) return null;
   if (rate.kind === 'audio') {
     return (usage.audio_ms / 3_600_000) * rate.usd_per_hour;
@@ -85,8 +120,8 @@ export interface CostSummary {
   hasUnpriced: boolean;
 }
 
-export function estimateCost(providers: InsightsProviderUsage[]): CostSummary {
-  const priced = providers.map((usage) => ({ usage, cost: modelCost(usage) }));
+export function estimateCost(providers: InsightsProviderUsage[], snapshot: PricingSnapshot | null = null): CostSummary {
+  const priced = providers.map((usage) => ({ usage, cost: modelCost(usage, snapshot) }));
   const total = priced.reduce((sum, p) => sum + (p.cost ?? 0), 0);
 
   const rows: CostRow[] = priced

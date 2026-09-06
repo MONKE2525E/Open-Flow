@@ -467,6 +467,7 @@ fn main() {
             commands::get_history_apps,
             commands::get_stats,
             commands::get_insights,
+            commands::get_insights_pricing,
             commands::count_old_transcriptions,
             commands::get_cleanup_cache_status,
             commands::clear_cleanup_cache,
@@ -601,3 +602,4 @@ fn schedule_settled_titlebar_refresh(app: &tauri::AppHandle) {
         }
     });
 }
+

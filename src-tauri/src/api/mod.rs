@@ -2,6 +2,7 @@ pub mod auto_learn;
 pub mod cleanup;
 pub mod client;
 pub mod gemini_types;
+pub mod openrouter;
 pub mod prompts;
 pub mod service_status;
 pub mod transcription;
