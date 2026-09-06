@@ -428,6 +428,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             system::windows_titlebar::get_native_titlebar_metrics,
+            system::windows_titlebar::set_native_titlebar_theme,
             commands::save_hotkey,
             commands::check_hotkey,
             commands::save_repair_hotkey,

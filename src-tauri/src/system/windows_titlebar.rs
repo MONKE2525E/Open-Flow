@@ -203,13 +203,17 @@ pub fn enable(window: &WebviewWindow, theme: Option<Theme>) -> Result<TitleBarMe
 }
 
 pub fn refresh(window: &WebviewWindow, theme: Option<Theme>) {
+    refresh_with_dark(window, resolved_dark(window, theme));
+}
+
+fn refresh_with_dark(window: &WebviewWindow, dark: bool) {
     let Ok(hwnd) = window.hwnd() else { return };
     let mut native = NativeMetrics::default();
     if let Ok(bridge) = bridge() {
         let hr = unsafe {
             (bridge.update)(
                 hwnd.0 as isize,
-                i32::from(resolved_dark(window, theme)),
+                i32::from(dark),
                 &mut native,
             )
         };
@@ -217,6 +221,13 @@ pub fn refresh(window: &WebviewWindow, theme: Option<Theme>) {
             emit_if_changed(window, &native);
         }
     }
+}
+
+/// Apply the theme the frontend is actually rendering. The native window theme
+/// can follow the OS while Verenu is explicitly set to the opposite appearance.
+#[tauri::command]
+pub fn set_native_titlebar_theme(window: WebviewWindow, dark: bool) {
+    refresh_with_dark(&window, dark);
 }
 
 pub(crate) fn refresh_for_app(app: &AppHandle) {
