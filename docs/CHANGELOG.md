@@ -33,6 +33,24 @@ Notable project changes are recorded here. GitHub Release pages remain the sourc
 - Added `docs/CONTEXTS.md` and marked App Mappings, Dictionary, and Snippets as legacy pages across the docs.
 - Fixed the Insights page stacking its summary tiles too early on narrow windows, stranding the gauge in a half-empty row — the hero band, heatmap rail, and vocabulary sections now adapt to the available column width and stay side by side down to the minimum window size.
 
+## 0.18.1
+
+- Removed orange from the native and packaged app icons. Runtime icons now use a pure black-and-white pair that follows light and dark appearance modes instead of the selected accent color
+- Fixed hands-free conversion ending when the original Windows modifier chord is released, and added a short handoff window for stale release events
+- Replaced the Insights speaking-pace dial with a tick-scale meter that keeps the best pace visible and scales to the user's history
+- Reduced Windows main-window CPU spikes and stutter during fast dragging or resizing by coalescing refresh work and caching themed icons
+- Restored the classic proportions of the Windows tray icon while keeping accent coloring for running tray, taskbar, window, and macOS Dock icons
+- Added light-mode contrast backdrops for transparent icons whose artwork is mostly white
+- Switched the default accent to black in light mode and white in dark mode while preserving custom accent colors
+- Made context app targets survive versioned and nightly app updates when publisher or developer evidence matches
+- Reworked cleanup prompting around one shared template with clearer rule priority, multilingual preservation, safer number handling, and context-assisted disambiguation
+- Added a model picker option for every text-capable model reported by a provider, while filtering out image, TTS, embedding, and other non-text models
+- Added a Legacy pages toggle for the older App Mappings, Dictionary, and Snippets pages, with Contexts now serving as the primary home for location-aware settings
+- Added website DNS validation, context name limits, character counts, compact icon color selection, and focused add-item animations
+- Improved Insights responsive layout on narrow windows and fixed several settings, prompt-editor, and list-animation issues
+
+The 0.18.1 release description, installer assets, hashes, and platform-specific download details are available on the [GitHub release page](https://github.com/MONKE2525E/Verenu/releases/tag/v0.18.1).
+
 ## 0.18.0
 
 The 0.18.0 release notes, installer assets, hashes, and platform-specific download details are available on the [GitHub release page](https://github.com/MONKE2525E/Verenu/releases/tag/v0.18.0).

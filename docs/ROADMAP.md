@@ -1,8 +1,8 @@
 # Roadmap: Verenu
 
-## Current line: 0.18.0
+## Current line: 0.18.1
 
-The current release is 0.18.0. Short-lived release work belongs in the `Unreleased` section of [CHANGELOG.md](CHANGELOG.md). This page records open follow-up work and longer-term status.
+The current release is 0.18.1. Short-lived release work belongs in the `Unreleased` section of [CHANGELOG.md](CHANGELOG.md). This page records open follow-up work and longer-term status.
 
 ## Completed foundations
 
@@ -90,7 +90,7 @@ The current pipeline stores provider-prefixed model IDs, persists defaults and f
 
 ## Release stabilization
 
-The project is now on 0.18.0. Use the current test profiles and platform checks for release verification; the old 0.10.0 versus 0.11.x gate is historical and no longer describes the release process.
+The project is now on 0.18.1. Use the current test profiles and platform checks for release verification; the old 0.10.0 versus 0.11.x gate is historical and no longer describes the release process.
 
 ## Intel Mac support for local models (currently gated off)
 - **Status**: Deliberately unavailable, not a bug. Local on-device STT/LLM (`local_stt`, `local_llm`) is blocked entirely on Intel (x86_64) Mac builds via `system::platform::is_macos_intel()` — the download commands return an error and the Settings → Models UI shows an explanatory notice instead of the download tiles.
