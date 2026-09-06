@@ -8,10 +8,7 @@ use tauri::{
 const TRAY_ID: &str = "verenu-tray";
 
 pub(crate) fn setting_updates_runtime_icons(key: &str) -> bool {
-    matches!(
-        key,
-        crate::data::store::APPEARANCE_MODE | crate::data::store::ACCENT_COLOR
-    )
+    key == crate::data::store::APPEARANCE_MODE
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -59,12 +56,12 @@ pub(crate) fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &[&open_i, &settings_i, &sep, &relaunch_i, &quit_i])?;
 
     let icon_theme = resolve_icon_theme(app.handle(), None);
-    let accent = resolve_icon_accent(app.handle());
+    let foreground = runtime_icon_foreground(icon_theme);
     #[cfg(target_os = "windows")]
     let tray_size = windows_tray_icon_size(app.handle());
     #[cfg(not(target_os = "windows"))]
     let tray_size = 32;
-    let tray_icon = runtime_tray_icon_image(icon_theme, accent, tray_size);
+    let tray_icon = runtime_tray_icon_image(icon_theme, foreground, tray_size);
 
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(tray_icon)
@@ -182,7 +179,6 @@ fn forwarded_relaunch_args() -> Vec<std::ffi::OsString> {
 #[derive(Clone)]
 struct CachedIconArt {
     theme: IconTheme,
-    accent: [u8; 4],
     tray_size: u32,
     window_rgba: Vec<u8>,
     tray_rgba: Vec<u8>,
@@ -190,20 +186,19 @@ struct CachedIconArt {
 
 static ICON_ART_CACHE: OnceLock<Mutex<Option<CachedIconArt>>> = OnceLock::new();
 
-fn cached_icon_art(theme: IconTheme, accent: [u8; 4], tray_size: u32) -> CachedIconArt {
+fn cached_icon_art(theme: IconTheme, tray_size: u32) -> CachedIconArt {
     if let Ok(guard) = ICON_ART_CACHE.get_or_init(|| Mutex::new(None)).lock() {
         if let Some(cached) = guard.as_ref() {
-            if cached.theme == theme && cached.accent == accent && cached.tray_size == tray_size {
+            if cached.theme == theme && cached.tray_size == tray_size {
                 return cached.clone();
             }
         }
     }
     let art = CachedIconArt {
         theme,
-        accent,
         tray_size,
-        window_rgba: runtime_icon_image(theme, accent, 128).rgba().to_vec(),
-        tray_rgba: runtime_tray_icon_image(theme, accent, tray_size)
+        window_rgba: runtime_icon_image(theme, 128).rgba().to_vec(),
+        tray_rgba: runtime_tray_icon_image(theme, runtime_icon_foreground(theme), tray_size)
             .rgba()
             .to_vec(),
     };
@@ -215,7 +210,6 @@ fn cached_icon_art(theme: IconTheme, accent: [u8; 4], tray_size: u32) -> CachedI
 
 pub(crate) fn apply_runtime_icons(app: &AppHandle, theme_hint: Option<Theme>) {
     let icon_theme = resolve_icon_theme(app, theme_hint);
-    let accent = resolve_icon_accent(app);
     #[cfg(target_os = "windows")]
     let tray_size = windows_tray_icon_size(app);
     #[cfg(not(target_os = "windows"))]
@@ -230,7 +224,7 @@ pub(crate) fn apply_runtime_icons(app: &AppHandle, theme_hint: Option<Theme>) {
         window_rgba,
         tray_rgba,
         ..
-    } = cached_icon_art(icon_theme, accent, tray_size);
+    } = cached_icon_art(icon_theme, tray_size);
 
     if let Some(w) = app.get_webview_window("main") {
         if let Err(err) = w.set_icon(tauri::image::Image::new_owned(window_rgba, 128, 128)) {
@@ -246,7 +240,7 @@ pub(crate) fn apply_runtime_icons(app: &AppHandle, theme_hint: Option<Theme>) {
 
     #[cfg(target_os = "macos")]
     {
-        let dock_icon = runtime_icon_image(icon_theme, accent, 512);
+        let dock_icon = runtime_icon_image(icon_theme, 512);
         if !crate::system::mac_app::apply_dock_icon(dock_icon.rgba(), 512, 512) {
             log::warn!("Failed to update macOS Dock icon");
         }
@@ -289,7 +283,7 @@ fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
 
     if let Some(w) = app.get_webview_window("main") {
         let icon_theme = resolve_icon_theme(app, theme_hint);
-        let accent = resolve_icon_accent(app);
+        let foreground = runtime_icon_foreground(icon_theme);
         // Same --paper value as theme.css, recolored onto the native caption.
         let bg = match icon_theme {
             IconTheme::Dark => colorref(20, 17, 14),
@@ -323,7 +317,7 @@ fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
                 // icon (ICON_BIG) and make only the caption's small icon fully transparent.
                 // WM_SETICON state survives — unlike the window's extended style, which tao
                 // resets after our call (so WS_EX_DLGMODALFRAME did not stick here).
-                replace_taskbar_icons(hwnd, icon_theme, accent);
+                replace_taskbar_icons(hwnd, icon_theme, foreground);
             }
         }
     }
@@ -607,8 +601,7 @@ fn write_runtime_ico(
 #[cfg(target_os = "windows")]
 pub(crate) fn prepare_windows_shell_icon(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let theme = resolve_icon_theme(app, None);
-    let accent = resolve_icon_accent(app);
-    let path = write_runtime_taskbar_ico(theme, accent)?;
+    let path = write_runtime_taskbar_ico(theme, runtime_icon_foreground(theme))?;
     log::info!("Windows themed ICO generated: {}", path.display());
     Ok(path)
 }
@@ -697,10 +690,7 @@ fn windows_taskbar_icon_image(
     size: u32,
 ) -> tauri::image::Image<'static> {
     let mut rgba = vec![0_u8; (size * size * 4) as usize];
-    let background = match theme {
-        IconTheme::Light => [249, 247, 243, 255],
-        IconTheme::Dark => [20, 17, 14, 255],
-    };
+    let background = runtime_icon_background(theme);
 
     draw_rounded_rect(
         &mut rgba,
@@ -818,10 +808,7 @@ fn windows_micro_icon_image(
     let factor = 32;
     let render_size = size * factor;
     let mut rgba = vec![0_u8; (render_size * render_size * 4) as usize];
-    let background = match theme {
-        IconTheme::Light => [249, 247, 243, 255],
-        IconTheme::Dark => [20, 17, 14, 255],
-    };
+    let background = runtime_icon_background(theme);
     draw_rounded_rect(
         &mut rgba,
         render_size,
@@ -882,7 +869,7 @@ fn runtime_tray_icon_image(
     }
     #[cfg(not(test))]
     {
-        runtime_icon_image(theme, accent, size)
+        runtime_icon_image(theme, size)
     }
 }
 
@@ -890,7 +877,7 @@ fn runtime_tray_icon_image(
 mod windows_icon_tests {
     #[cfg(target_os = "windows")]
     use super::{runtime_ico_bytes, windows_taskbar_icon_image, FULL_ICO_SIZES};
-    use super::{runtime_tray_icon_image, IconTheme, DEFAULT_ICON_ACCENT};
+    use super::{runtime_icon_foreground, runtime_tray_icon_image, IconTheme};
 
     /// Normalized accent-glyph bounds of an RGBA buffer, as fractions of the image:
     /// `(width, height, centre_x, centre_y)`.
@@ -905,10 +892,7 @@ mod windows_icon_tests {
                     rgba[i + 2] as i32,
                     rgba[i + 3],
                 );
-                // #d97757 is far redder than either tile colour; the tolerance
-                // lets antialiased edges in the .ico count too.
-                let _ = green;
-                if alpha > 128 && red > 140 && red - blue > 50 {
+                if alpha > 128 && red > 140 && green > 140 && blue > 140 {
                     l = l.min(x);
                     t = t.min(y);
                     r = r.max(x + 1);
@@ -926,13 +910,13 @@ mod windows_icon_tests {
         )
     }
 
-    /// Per-bar heights of the accent glyph, normalized so the tallest bar is 1.0.
+    /// Per-bar heights of the foreground glyph, normalized so the tallest bar is 1.0.
     ///
     /// This — not the glyph's bounding-box aspect — is what makes the taskbar mark
     /// read as the same logo as the tray. Bar width, gap and overall scale are
     /// deliberately different between the two.
     ///
-    /// Columns are grouped into contiguous runs of accent pixels; each run is one bar.
+    /// Columns are grouped into contiguous runs of white pixels; each run is one bar.
     /// Only meaningful at 256px, where the bars are ~28px wide with ~11px gaps and so
     /// cannot merge — at 32px a gap is one pixel and antialiasing bridges it.
     fn bar_height_ratios(rgba: &[u8], size: u32) -> Vec<f64> {
@@ -940,8 +924,13 @@ mod windows_icon_tests {
             let (mut top, mut bottom) = (size, 0_u32);
             for y in 0..size {
                 let i = ((y * size + x) * 4) as usize;
-                let (red, blue, alpha) = (rgba[i] as i32, rgba[i + 2] as i32, rgba[i + 3]);
-                if alpha > 128 && red > 140 && red - blue > 50 {
+                let (red, green, blue, alpha) = (
+                    rgba[i] as i32,
+                    rgba[i + 1] as i32,
+                    rgba[i + 2] as i32,
+                    rgba[i + 3],
+                );
+                if alpha > 128 && red > 140 && green > 140 && blue > 140 {
                     top = top.min(y);
                     bottom = bottom.max(y + 1);
                 }
@@ -965,7 +954,7 @@ mod windows_icon_tests {
         if let Some(max) = run {
             bars.push(max);
         }
-        let tallest = f64::from(*bars.iter().max().expect("no accent bars found"));
+        let tallest = f64::from(*bars.iter().max().expect("no foreground bars found"));
         bars.into_iter().map(|h| f64::from(h) / tallest).collect()
     }
 
@@ -974,7 +963,12 @@ mod windows_icon_tests {
     /// overall scale — is allowed to differ.
     fn assert_matches_tray_ratios(label: &str, actual: &[f64]) {
         let tray = bar_height_ratios(
-            runtime_tray_icon_image(IconTheme::Dark, DEFAULT_ICON_ACCENT, 256).rgba(),
+            runtime_tray_icon_image(
+                IconTheme::Dark,
+                runtime_icon_foreground(IconTheme::Dark),
+                256,
+            )
+            .rgba(),
             256,
         );
         assert_eq!(
@@ -1077,7 +1071,11 @@ mod windows_icon_tests {
     #[test]
     fn taskbar_hicon_matches_the_ico_geometry() {
         let size = 256_u32;
-        let taskbar = windows_taskbar_icon_image(IconTheme::Light, DEFAULT_ICON_ACCENT, size);
+        let taskbar = windows_taskbar_icon_image(
+            IconTheme::Dark,
+            runtime_icon_foreground(IconTheme::Dark),
+            size,
+        );
         let (w, h, cx, cy) = glyph_bounds(taskbar.rgba(), size);
 
         assert_matches_tray_ratios("taskbar hicon", &bar_height_ratios(taskbar.rgba(), size));
@@ -1104,7 +1102,12 @@ mod windows_icon_tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn runtime_ico_contains_all_native_windows_sizes() {
-        let ico = runtime_ico_bytes(IconTheme::Dark, DEFAULT_ICON_ACCENT, &FULL_ICO_SIZES).unwrap();
+        let ico = runtime_ico_bytes(
+            IconTheme::Dark,
+            runtime_icon_foreground(IconTheme::Dark),
+            &FULL_ICO_SIZES,
+        )
+        .unwrap();
         assert_eq!(u16::from_le_bytes([ico[4], ico[5]]), 15);
         let sizes: Vec<u16> = (0..15)
             .map(|index| {
@@ -1130,7 +1133,12 @@ mod windows_icon_tests {
     #[test]
     fn tray_geometry_is_optically_sized() {
         let (w, h, cx, cy) = glyph_bounds(
-            runtime_tray_icon_image(IconTheme::Dark, DEFAULT_ICON_ACCENT, 20).rgba(),
+            runtime_tray_icon_image(
+                IconTheme::Dark,
+                runtime_icon_foreground(IconTheme::Dark),
+                20,
+            )
+            .rgba(),
             20,
         );
         assert!((0.56..=0.70).contains(&w), "micro glyph width: {w:.3}");
@@ -1154,35 +1162,23 @@ fn resolve_icon_theme(app: &AppHandle, theme_hint: Option<Theme>) -> IconTheme {
     }
 }
 
-const DEFAULT_ICON_ACCENT: [u8; 4] = [217, 119, 87, 255];
-
-fn parse_icon_accent(value: Option<&str>) -> [u8; 4] {
-    let Some(hex) = value.and_then(|value| value.strip_prefix('#')) else {
-        return DEFAULT_ICON_ACCENT;
-    };
-    if hex.len() != 6 || !hex.is_ascii() {
-        return DEFAULT_ICON_ACCENT;
-    }
-    let parse = |range| u8::from_str_radix(&hex[range], 16).ok();
-    match (parse(0..2), parse(2..4), parse(4..6)) {
-        (Some(r), Some(g), Some(b)) => [r, g, b, 255],
-        _ => DEFAULT_ICON_ACCENT,
+fn runtime_icon_background(theme: IconTheme) -> [u8; 4] {
+    match theme {
+        IconTheme::Light => [255, 255, 255, 255],
+        IconTheme::Dark => [0, 0, 0, 255],
     }
 }
 
-fn resolve_icon_accent(app: &AppHandle) -> [u8; 4] {
-    let value = crate::data::store::settings_handle(app)
-        .ok()
-        .and_then(|settings| settings.get(crate::data::store::ACCENT_COLOR));
-    parse_icon_accent(value.as_ref().and_then(serde_json::Value::as_str))
+fn runtime_icon_foreground(theme: IconTheme) -> [u8; 4] {
+    match theme {
+        IconTheme::Light => [0, 0, 0, 255],
+        IconTheme::Dark => [255, 255, 255, 255],
+    }
 }
 
 #[cfg(test)]
-mod icon_accent_tests {
-    use super::{
-        cached_icon_art, parse_icon_accent, runtime_icon_image, setting_updates_runtime_icons,
-        IconTheme, DEFAULT_ICON_ACCENT,
-    };
+mod icon_theme_tests {
+    use super::{cached_icon_art, runtime_icon_image, setting_updates_runtime_icons, IconTheme};
 
     fn pixel(image: &tauri::image::Image<'_>, size: u32, x: u32, y: u32) -> [u8; 4] {
         let offset = ((y * size + x) * 4) as usize;
@@ -1190,45 +1186,32 @@ mod icon_accent_tests {
     }
 
     #[test]
-    fn accent_defaults_to_verenu_orange() {
-        assert_eq!(parse_icon_accent(None), DEFAULT_ICON_ACCENT);
-        assert_eq!(parse_icon_accent(Some("invalid")), DEFAULT_ICON_ACCENT);
+    fn runtime_icon_uses_only_black_and_white_theme_colors() {
+        let light = runtime_icon_image(IconTheme::Light, 128);
+        let dark = runtime_icon_image(IconTheme::Dark, 128);
+
+        assert_eq!(pixel(&light, 128, 64, 24), [255, 255, 255, 255]);
+        assert_eq!(pixel(&dark, 128, 64, 24), [0, 0, 0, 255]);
+        assert_eq!(pixel(&light, 128, 64, 55), [0, 0, 0, 255]);
+        assert_eq!(pixel(&dark, 128, 64, 55), [255, 255, 255, 255]);
     }
 
     #[test]
-    fn accent_accepts_six_digit_hex_in_either_case() {
-        assert_eq!(parse_icon_accent(Some("#5B8CFF")), [91, 140, 255, 255]);
-        assert_eq!(parse_icon_accent(Some("#a04fd8")), [160, 79, 216, 255]);
-    }
-
-    #[test]
-    fn runtime_icon_keeps_theme_background_and_uses_custom_accent() {
-        let accent = [91, 140, 255, 255];
-        let light = runtime_icon_image(IconTheme::Light, accent, 128);
-        let dark = runtime_icon_image(IconTheme::Dark, accent, 128);
-
-        assert_eq!(pixel(&light, 128, 64, 24), [249, 247, 243, 255]);
-        assert_eq!(pixel(&dark, 128, 64, 24), [20, 17, 14, 255]);
-        assert_eq!(pixel(&light, 128, 64, 55), accent);
-        assert_eq!(pixel(&dark, 128, 64, 55), accent);
-    }
-
-    #[test]
-    fn appearance_and_accent_settings_refresh_runtime_icons() {
+    fn only_appearance_settings_refresh_runtime_icons() {
         assert!(setting_updates_runtime_icons("appearance_mode"));
-        assert!(setting_updates_runtime_icons("accent_color"));
+        assert!(!setting_updates_runtime_icons("accent_color"));
         assert!(!setting_updates_runtime_icons("default_tone"));
     }
 
     #[test]
     fn icon_art_cache_reuses_bytes_for_unchanged_inputs() {
-        let first = cached_icon_art(IconTheme::Dark, DEFAULT_ICON_ACCENT, 20);
-        let second = cached_icon_art(IconTheme::Dark, DEFAULT_ICON_ACCENT, 20);
+        let first = cached_icon_art(IconTheme::Dark, 20);
+        let second = cached_icon_art(IconTheme::Dark, 20);
         assert_eq!(first.window_rgba, second.window_rgba);
         assert_eq!(first.tray_rgba, second.tray_rgba);
         // A different tray size (e.g. after a DPI change) must re-render at
         // the new size, not serve the old size's bytes.
-        let other_size = cached_icon_art(IconTheme::Dark, DEFAULT_ICON_ACCENT, 24);
+        let other_size = cached_icon_art(IconTheme::Dark, 24);
         assert_eq!(other_size.tray_rgba.len(), 24 * 24 * 4);
         assert_eq!(other_size.window_rgba, first.window_rgba);
     }
@@ -1241,16 +1224,9 @@ pub(crate) fn appearance_mode(app: &AppHandle) -> Option<String> {
         .and_then(|value| value.as_str().map(String::from))
 }
 
-fn runtime_icon_image(
-    theme: IconTheme,
-    accent: [u8; 4],
-    size: u32,
-) -> tauri::image::Image<'static> {
+fn runtime_icon_image(theme: IconTheme, size: u32) -> tauri::image::Image<'static> {
     let mut rgba = vec![0_u8; (size * size * 4) as usize];
-    let background = match theme {
-        IconTheme::Light => [249, 247, 243, 255],
-        IconTheme::Dark => [20, 17, 14, 255],
-    };
+    let background = runtime_icon_background(theme);
 
     #[cfg(target_os = "macos")]
     let background_rect = IconRect {
@@ -1276,7 +1252,7 @@ fn runtime_icon_image(
     let glyph_width = scale(size, canonical_mark::CANONICAL_MARK_WIDTH);
     #[cfg(not(target_os = "macos"))]
     let glyph_width = scale(size, 368);
-    draw_canonical_mark(&mut rgba, size, accent, glyph_width);
+    draw_canonical_mark(&mut rgba, size, runtime_icon_foreground(theme), glyph_width);
 
     tauri::image::Image::new_owned(rgba, size, size)
 }
