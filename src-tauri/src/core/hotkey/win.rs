@@ -187,34 +187,6 @@ pub fn is_hotkey_available(key1: &str, key2: &str) -> bool {
     }
 }
 
-pub fn is_repair_hotkey_available(key1: &str, key2: &str, key3: &str) -> bool {
-    let modifier_flags = [key1, key2].iter().try_fold(0u32, |flags, key| {
-        let flag = match *key {
-            "ShiftLeft" | "ShiftRight" => MOD_SHIFT.0,
-            "ControlLeft" | "ControlRight" => MOD_CONTROL.0,
-            "AltLeft" | "AltRight" => MOD_ALT.0,
-            "MetaLeft" | "MetaRight" => MOD_WIN.0,
-            _ => return None,
-        };
-        Some(flags | flag)
-    });
-    let Some(modifier_flags) = modifier_flags else {
-        return true;
-    };
-    let vk = map_code_to_vk(key3);
-    if vk == 0 {
-        return true;
-    }
-    unsafe {
-        if RegisterHotKey(None, 0x5A8F, HOT_KEY_MODIFIERS(modifier_flags), vk).is_ok() {
-            let _ = UnregisterHotKey(None, 0x5A8F);
-            true
-        } else {
-            false
-        }
-    }
-}
-
 static KEY1: AtomicU32 = AtomicU32::new(162); // VK_LCONTROL / Ctrl
 static KEY2: AtomicU32 = AtomicU32::new(91); // VK_LWIN / Windows
 
@@ -744,31 +716,6 @@ static ESCAPE_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::
 static COPY_LAST_KEY_DOWN: AtomicBool = AtomicBool::new(false);
 static COPY_LAST_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
 
-// User-configurable "open the repair complaint box" hotkey. Two modifiers
-// plus one regular trigger key (default Ctrl+Alt+Z) — deliberately NOT a
-// two-key modifier-only chord like the main hotkey. An earlier version let
-// this be set to e.g. Ctrl+Alt alone and suppressed (return LRESULT(1))
-// *either* configured key's own down/up the moment it matched, before the
-// main chord's ChordStateMachine ever saw it — so a bare Ctrl press (half of
-// the default main hotkey) got eaten outright, breaking dictation entirely.
-// This mirrors the existing Ctrl+Alt+C copy-last shortcut instead: only the
-// trigger key's own event is ever intercepted, and only once GetAsyncKeyState
-// confirms both modifiers are already down — bare Ctrl/Alt presses, and every
-// other shortcut built on them (including the main hotkey), are untouched.
-static REPAIR_MOD1: AtomicU32 = AtomicU32::new(162); // Ctrl
-static REPAIR_MOD2: AtomicU32 = AtomicU32::new(164); // Alt
-static REPAIR_TRIGGER: AtomicU32 = AtomicU32::new(0x5A); // 'Z'
-static REPAIR_TRIGGER_DOWN: AtomicBool = AtomicBool::new(false);
-static REPAIR_OPEN_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> =
-    std::sync::OnceLock::new();
-
-pub fn update_repair_keys(mod1: u32, mod2: u32, trigger: u32) {
-    REPAIR_MOD1.store(mod1, Ordering::SeqCst);
-    REPAIR_MOD2.store(mod2, Ordering::SeqCst);
-    REPAIR_TRIGGER.store(trigger, Ordering::SeqCst);
-    REPAIR_TRIGGER_DOWN.store(false, Ordering::SeqCst);
-}
-
 unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
@@ -786,27 +733,6 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         let is_key1 = vk_matches(vk, k1);
         let is_down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
         let is_up = msg == WM_KEYUP || msg == WM_SYSKEYUP;
-
-        // Repair-open hotkey (Ctrl+Alt+Z by default): only the trigger key's
-        // own event is ever intercepted, exactly like the Ctrl+Alt+C
-        // copy-last shortcut below — bare modifier presses are never touched,
-        // so this can never eat half of the main hotkey (see the doc comment
-        // on REPAIR_MOD1 for the bug this replaced).
-        if vk == REPAIR_TRIGGER.load(Ordering::Relaxed) && (is_down || is_up) {
-            let mods_held = modifier_held(REPAIR_MOD1.load(Ordering::Relaxed))
-                && modifier_held(REPAIR_MOD2.load(Ordering::Relaxed));
-            if is_down && mods_held {
-                if !REPAIR_TRIGGER_DOWN.swap(true, Ordering::SeqCst) {
-                    if let Some(cb) = REPAIR_OPEN_CB.get() {
-                        cb();
-                    }
-                }
-                return LRESULT(1);
-            }
-            if is_up && REPAIR_TRIGGER_DOWN.swap(false, Ordering::SeqCst) && mods_held {
-                return LRESULT(1);
-            }
-        }
 
         if RESET_REQUESTED.swap(false, Ordering::SeqCst) {
             CHORD_MACHINE.with(|m| m.borrow_mut().reset_gesture_state());
@@ -1333,14 +1259,13 @@ mod chord_tests {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn start<P, R, H, C, E, L, O>(
+pub fn start<P, R, H, C, E, L>(
     on_press: P,
     on_release: R,
     on_handless: H,
     on_cancel: C,
     on_escape: E,
     on_copy_last: L,
-    on_repair_open: O,
 ) -> Result<std::thread::JoinHandle<()>, String>
 where
     P: Fn() + Send + Sync + 'static,
@@ -1349,7 +1274,6 @@ where
     C: Fn() + Send + Sync + 'static,
     E: Fn() + Send + Sync + 'static,
     L: Fn() + Send + Sync + 'static,
-    O: Fn() + Send + Sync + 'static,
 {
     let _ = PRESS_CB.set(Box::new(on_press));
     let _ = RELEASE_CB.set(Box::new(on_release));
@@ -1357,7 +1281,6 @@ where
     let _ = CANCEL_CB.set(Box::new(on_cancel));
     let _ = ESCAPE_CB.set(Box::new(on_escape));
     let _ = COPY_LAST_CB.set(Box::new(on_copy_last));
-    let _ = REPAIR_OPEN_CB.set(Box::new(on_repair_open));
 
     // Verify the hook can be installed before spawning the thread so the caller
     // gets a synchronous error instead of a silent panic on a background thread.

@@ -205,7 +205,6 @@ pub const DUAL_TRANSCRIPTION_ENABLED: &str = "dual_transcription_enabled";
 pub const CLEANUP_FALLBACK_MODELS: &str = "cleanup_fallback_models";
 pub const CLEANUP_ENABLED: &str = "cleanup_enabled";
 pub const HOTKEY: &str = "hotkey";
-pub const REPAIR_HOTKEY: &str = "repair_hotkey";
 pub const MICROPHONE_DEVICE: &str = "microphone_device";
 pub const DEFAULT_TONE: &str = "default_tone";
 pub const CLEANUP_INTENSITY: &str = "cleanup_intensity";
@@ -227,7 +226,7 @@ pub const AUTO_LEARN_ENABLED: &str = "auto_learn_enabled";
 pub const AUTO_LEARN_EVENT_MODE: &str = "auto_learn_event_mode";
 pub const CONTEXTUAL_FORMATTING: &str = "contextual_formatting_enabled";
 /// Legacy mirror of [`CONTEXTUAL_FORMATTING`], still written on every save so a
-/// downgrade to an older build keeps working. Read only by the repair proposer.
+/// downgrade to an older build keeps working.
 pub const CONTEXTUAL_CAPS: &str = "contextual_caps_enabled";
 /// Legacy mirror of [`CONTEXTUAL_FORMATTING`]. See [`CONTEXTUAL_CAPS`].
 pub const AUTO_SPACING: &str = "auto_spacing_enabled";

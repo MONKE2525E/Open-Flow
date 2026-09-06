@@ -54,21 +54,12 @@ pub struct AppState {
     pub retry_capture: Option<RetryCapture>,
     pub cancelled_capture: Option<CancelledCapture>,
     pub paste_failure: Option<PasteFailure>,
-    pub repair: Option<super::repair::RepairSession>,
     /// Id of the in-flight durable dictation, if any.
     pub failover_session_id: Option<String>,
     /// When true, the next durable start reuses `failover_session_id` (resume).
     pub failover_reuse_id: bool,
     /// Wall-clock start of the current durable take, used when committing.
     pub failover_started_at_unix: i64,
-    /// Set only by the hotkey path when a Press was routed into the repair
-    /// pill's complaint recording (see app_hotkey.rs) — checked and cleared
-    /// on the matching Release so that release routes to the same place the
-    /// press did, rather than re-deriving it from ambient repair-session
-    /// state, which stays around in the background long after the repair
-    /// pill has lost focus and would otherwise hijack an unrelated,
-    /// currently-focused-elsewhere dictation's Release too.
-    pub hotkey_recording_repair_complaint: bool,
 }
 
 /// Single source of truth for what the app is currently doing with the
@@ -229,10 +220,6 @@ pub fn reserve_starting(state: &SharedState) -> Result<(), String> {
         "lifecycle: {} -> starting",
         describe_lifecycle(&st.lifecycle)
     );
-    // A new dictation owns the pill immediately. Drop any pending repair
-    // snapshot/proposal so a late provider response cannot repaint the new
-    // recording with stale repair UI.
-    st.repair = None;
     st.lifecycle = DictationLifecycle::Starting {
         prepend_audio: None,
     };
@@ -304,7 +291,6 @@ pub fn set_starting_prepend_audio(state: &SharedState, audio: CapturedAudio) {
 /// returns `None`.
 pub fn take_active_pipeline_for_interrupt(state: &SharedState) -> Option<ActivePipeline> {
     let mut st = lock_state(state).ok()?;
-    st.repair = None;
     match std::mem::replace(&mut st.lifecycle, DictationLifecycle::Idle) {
         DictationLifecycle::Processing(active) => {
             crate::core::hotkey::clear_processing_generation(active.generation);
@@ -403,10 +389,6 @@ pub fn take_active_pipeline_for_escape(state: &SharedState) -> Option<ActivePipe
 /// Escape while still actively recording (pre-`Release`).
 pub fn take_recording_plain(state: &SharedState) -> Option<(audio::RecordingSession, Option<u64>)> {
     let mut st = lock_state(state).ok()?;
-    // A discarded/cancelled recording never reaches app_hotkey's Release
-    // branch that would otherwise clear this — reset it here so a later,
-    // unrelated Release can't misroute into finish_complaint_recording.
-    st.hotkey_recording_repair_complaint = false;
     match std::mem::replace(&mut st.lifecycle, DictationLifecycle::Idle) {
         DictationLifecycle::Recording {
             session,
@@ -756,8 +738,6 @@ mod tests {
             retry_capture: None,
             cancelled_capture: None,
             paste_failure: None,
-            repair: None,
-            hotkey_recording_repair_complaint: false,
             failover_session_id: None,
             failover_reuse_id: false,
             failover_started_at_unix: 0,

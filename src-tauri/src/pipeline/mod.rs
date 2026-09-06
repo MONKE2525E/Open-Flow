@@ -23,8 +23,6 @@ mod gates;
 mod pill;
 mod pill_animation;
 mod pill_position;
-mod repair;
-mod repair_proposal;
 mod session;
 mod stages_cleanup;
 mod stages_style;
@@ -46,7 +44,7 @@ use gates::{
     MIN_RECORDING_MS, MIN_RECORDING_RMS,
 };
 pub(crate) use pill::{
-    emit_pill_context, emit_pill_stage, hide_pill, pill_wants_repair_focus,
+    emit_pill_context, emit_pill_stage, hide_pill,
     show_clipboard_warning_pill, show_copied_pill, show_pill, update_pill_state,
 };
 use pill::{
@@ -56,8 +54,6 @@ use pill::{
 pub(crate) use pill_position::{
     apply_pill_placement, placement_for_current_monitor, PillPlacement,
 };
-pub(crate) use repair::*;
-use repair_proposal::*;
 pub(crate) use session::*;
 use stages_cleanup::*;
 use stages_style::*;
@@ -703,7 +699,6 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
             event_only,
             caps_lock_on,
             context: Some(&resolved_context),
-            browser_domain,
         },
     )
     .await
@@ -909,7 +904,6 @@ pub async fn retry_transcription_impl(
             event_only: false,
             caps_lock_on: capture.caps_lock_on,
             context: None,
-            browser_domain: None,
         },
     )
     .await
